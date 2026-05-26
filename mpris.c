@@ -4,7 +4,6 @@
 #include <libavformat/avformat.h>
 #include <inttypes.h>
 #include <string.h>
-#include <stdbool.h>
 
 
 static const char *introspection_xml =
@@ -1354,8 +1353,8 @@ typedef struct {
 
 typedef struct {
     const char* fmt;
-    bool needs_name;
-    bool needs_ext;
+    gboolean needs_name;
+    gboolean needs_ext;
 } TinyMediaManagerNameFormat;
 
 gchar* format_format_filename_tiny_media_manager(TinyMediaManagerNameFormat format, gchar* dirname, gchar* basename, gchar * ext){
@@ -1411,25 +1410,25 @@ static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, char *path, TinyMe
     const  TinyMediaManagerNameFormat formatters[] = {
          // possible series preview images:
         //"<dynamic>-thumb.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/%s-thumb.%s",.needs_name = true, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s-thumb.%s",.needs_name = TRUE, .needs_ext = TRUE},
         // "<dynamic>.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/%s.%s",.needs_name = true, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s.%s",.needs_name = TRUE, .needs_ext = TRUE},
         // "<dynamic>.tbn"
-        (TinyMediaManagerNameFormat){.fmt = "%s/%s.tbn",.needs_name = true, .needs_ext = false},
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s.tbn",.needs_name = TRUE, .needs_ext = FALSE},
         //
         // possible movie poster
         // "poster.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/poster.%s",.needs_name = false, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/poster.%s",.needs_name = FALSE, .needs_ext = TRUE},
         // "movie.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/movie.%s",.needs_name = false, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/movie.%s",.needs_name = FALSE, .needs_ext = TRUE},
         //  "folder.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/folder.%s",.needs_name = false, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/folder.%s",.needs_name = FALSE, .needs_ext = TRUE},
         // "<name>-poster.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/%s-poster.%s",.needs_name = true, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s-poster.%s",.needs_name = TRUE, .needs_ext = TRUE},
         // "<name>.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/%s.%s",.needs_name = true, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s.%s",.needs_name = TRUE, .needs_ext = TRUE},
         // "cover.<ext>"
-        (TinyMediaManagerNameFormat){.fmt = "%s/cover.%s",.needs_name = false, .needs_ext = true},
+        (TinyMediaManagerNameFormat){.fmt = "%s/cover.%s",.needs_name = FALSE, .needs_ext = TRUE},
     };
 
     for (size_t i=0;i < sizeof(formatters)/sizeof((*formatters));++i) {

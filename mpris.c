@@ -4,6 +4,8 @@
 #include <libavformat/avformat.h>
 #include <inttypes.h>
 #include <string.h>
+#include <stdbool.h>
+
 
 static const char *introspection_xml =
     "<node>\n"
@@ -66,6 +68,36 @@ static const char *introspection_xml =
     "  </interface>\n"
     "</node>\n";
 
+typedef struct {
+    const char* name;
+    //
+    void* state;
+    //
+    gchar*(*try_get_art)(mpv_handle *mpv, char *path, void* state);
+    void(*free_state)(void* state);
+}DynamicArtHandler;
+
+typedef struct {
+    DynamicArtHandler* items;
+    size_t count;
+    size_t capacity;
+} DynamicArtHandlerArray;
+
+#define START_ARRAY_CAP 8
+#define ARRAY_CAP_GROW(cap) (cap)*2
+
+void dynamic_art_handlers_append_unchecked(DynamicArtHandlerArray* array, DynamicArtHandler item){
+    if(array->capacity <= array->count){
+        array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW( array->capacity);
+    
+        array->items = g_realloc(array->items,sizeof(DynamicArtHandler) * array->capacity);
+    }
+
+    array->items[array->count] = item;
+    array->count++;
+}
+
+
 typedef struct UserData
 {
     mpv_handle *mpv;
@@ -96,6 +128,8 @@ typedef struct UserData
     int64_t playlist_pos;
     gchar *cached_path;
     gchar *cached_art_url;
+    //
+    DynamicArtHandlerArray dynamic_art_handlers;
 } UserData;
 
 static const char *STATUS_PLAYING = "Playing";
@@ -271,6 +305,19 @@ done:
     return out;
 }
 
+static gchar* try_get_dynamic_art(mpv_handle *mpv, DynamicArtHandlerArray handlers,char *path){
+
+    for(size_t i = 0; i < handlers.count;++i){
+        const DynamicArtHandler handler = handlers.items[i];
+
+        gchar* result = handler.try_get_art(mpv, path,handler.state);
+        if(result != NULL){
+            return result;
+        }
+    }
+    return NULL;
+}
+
 static const char *youtube_url_pattern =
     "^https?:\\/\\/(?:youtu\\.be\\/|(?:www\\.)?youtube\\.com\\/watch\\?v=)(?<id>[a-zA-Z0-9_-]*)\\??.*";
 
@@ -360,7 +407,7 @@ static gchar* try_get_embedded_art(char *path)
     return out;
 }
 
-static gchar* get_art_url(mpv_handle *mpv, char *path)
+static gchar* get_art_url(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, char *path)
 {
     gchar *url;
     gboolean is_remote = g_str_has_prefix(path, "http");
@@ -373,12 +420,14 @@ static gchar* get_art_url(mpv_handle *mpv, char *path)
         return url;
     if (!is_remote && (url = try_get_folder_art(mpv, path)))
         return url;
+    if (!is_remote && (url = try_get_dynamic_art(mpv, dynamic_art_handlers, path)))
+        return url;
 
     return NULL;
 }
 
-static void add_metadata_art(UserData *ud, GVariantDict *dict)
-{
+static void add_metadata_art(UserData *ud, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict){
+
     mpv_handle *mpv = ud->mpv;
     char *path = mpv_get_property_string(mpv, "path");
 
@@ -391,7 +440,7 @@ static void add_metadata_art(UserData *ud, GVariantDict *dict)
         g_free(ud->cached_path);
         g_free(ud->cached_art_url);
         ud->cached_path = g_strdup(path);
-        ud->cached_art_url = get_art_url(mpv, path);
+        ud->cached_art_url = get_art_url(mpv, dynamic_art_handlers, path);
     }
 
     mpv_free(path);
@@ -486,7 +535,7 @@ static GVariant *create_metadata(UserData *ud)
     add_metadata_item_int(ud->mpv, &dict, "metadata/by-key/Disc", "xesam:discNumber");
 
     add_metadata_uri(ud->mpv, &dict);
-    add_metadata_art(ud, &dict);
+    add_metadata_art(ud, ud->dynamic_art_handlers,&dict);
     add_metadata_content_created(ud->mpv, &dict);
 
     return g_variant_dict_end(&dict);
@@ -1299,6 +1348,160 @@ static gboolean setup_mpv_event_sources(UserData *ud)
     return TRUE;
 }
 
+typedef struct {
+    char _unused[1];
+} TinyMediaManagerState;
+
+typedef struct {
+    const char* fmt;
+    bool needs_name;
+    bool needs_ext;
+} TinyMediaManagerNameFormat;
+
+gchar* format_format_filename_tiny_media_manager(TinyMediaManagerNameFormat format, gchar* dirname, gchar* basename, gchar * ext){
+    if(format.needs_name){
+        if(format.needs_ext){
+            return g_strdup_printf(format.fmt, dirname, basename, ext);
+        }
+
+        return g_strdup_printf(format.fmt, dirname, basename);
+    }
+
+    if(format.needs_ext){
+        return g_strdup_printf(format.fmt, dirname, ext);
+    }
+
+    return g_strdup_printf(format.fmt, dirname);
+}
+
+static gchar* get_basename_without_ext(char* path){
+    gchar *basename = g_path_get_basename(path);;
+    if(basename == NULL){
+        return NULL;
+    }
+    
+    gchar *dot = g_strrstr(basename, ".");
+
+    if (dot != NULL) {
+        *dot = '\0';
+    }
+
+    return basename;
+}
+
+static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, char *path, TinyMediaManagerState* state){
+    gchar *out = NULL;
+    gchar *dirname = g_path_get_dirname(path);
+    gchar *basename = get_basename_without_ext(path);
+
+    (void)state;
+
+    char *exts_str = mpv_get_property_string(mpv, "image-exts");
+    if (!exts_str) {
+        mpv_free(exts_str);
+        g_free(dirname);
+        g_free(basename);
+        return NULL;
+    }
+
+    gchar **exts = g_strsplit(exts_str, ",", -1);;
+    mpv_free(exts_str);
+
+
+    const  TinyMediaManagerNameFormat formatters[] = {
+         // possible series preview images:
+        //"<dynamic>-thumb.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s-thumb.%s",.needs_name = true, .needs_ext = true},
+        // "<dynamic>.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s.%s",.needs_name = true, .needs_ext = true},
+        // "<dynamic>.tbn"
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s.tbn",.needs_name = true, .needs_ext = false},
+        //
+        // possible movie poster
+        // "poster.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/poster.%s",.needs_name = false, .needs_ext = true},
+        // "movie.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/movie.%s",.needs_name = false, .needs_ext = true},
+        //  "folder.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/folder.%s",.needs_name = false, .needs_ext = true},
+        // "<name>-poster.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s-poster.%s",.needs_name = true, .needs_ext = true},
+        // "<name>.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/%s.%s",.needs_name = true, .needs_ext = true},
+        // "cover.<ext>"
+        (TinyMediaManagerNameFormat){.fmt = "%s/cover.%s",.needs_name = false, .needs_ext = true},
+    };
+
+    for (size_t i=0;i < sizeof(formatters)/sizeof((*formatters));++i) {
+        const TinyMediaManagerNameFormat formatter = formatters[i];
+        for (gchar **ext = exts; *ext; ++ext) {
+
+            gchar *filename = format_format_filename_tiny_media_manager(formatter, dirname, basename, *ext);
+
+            if(filename == NULL){
+                continue;
+            }
+
+            if (g_file_test(filename, G_FILE_TEST_EXISTS)) {
+                out = path_to_uri(mpv, filename);
+                g_free(filename);
+                goto done;
+            }
+            g_free(filename);
+        }
+    }
+
+done:
+    g_strfreev(exts);
+    g_free(dirname);
+    g_free(basename);
+    return out;
+}
+
+void free_state_tiny_media_manager(TinyMediaManagerState* state){
+   //nothing to do
+   (void)state;
+}
+
+static DynamicArtHandlerArray get_dynamic_art_handlers(void){
+    DynamicArtHandlerArray array = {.capacity = 0,.count = 0,.items = NULL};
+
+    {
+        TinyMediaManagerState* state = g_malloc(sizeof(TinyMediaManagerState));
+        *state = (TinyMediaManagerState){0};
+
+        DynamicArtHandler tiny_media_info_thumb_handler = {
+            .name ="TinyMediaInfo",
+            .state = state,
+            .try_get_art = (gchar*(*)(mpv_handle *mpv, char *path, void* state))try_get_art_tiny_media_manager,
+            .free_state = (void(*)(void* state))free_state_tiny_media_manager,
+        };
+
+        dynamic_art_handlers_append_unchecked(&array,tiny_media_info_thumb_handler);
+
+    }
+
+
+    return array;
+}
+
+static void free_art_handler(DynamicArtHandler* handler){
+    handler->free_state(handler->state);
+    handler->state = NULL;
+}
+
+static void free_art_handlers(DynamicArtHandlerArray* handlers){
+    for(size_t i =0; i < handlers->count;++i){
+        free_art_handler(&(handlers->items[i]));
+    }
+
+    g_free(handlers->items);
+
+    handlers->items = NULL;
+    handlers->capacity = 0;
+    handlers->count = 0;
+}
+
 // Plugin entry point
 int mpv_open_cplugin(mpv_handle *mpv)
 {
@@ -1337,6 +1540,8 @@ int mpv_open_cplugin(mpv_handle *mpv)
     char *client_name = mpv_get_property_string(mpv, "audio-client-name");
     ud.client_name = g_strdup(client_name);
     mpv_free(client_name);
+    ud.dynamic_art_handlers = get_dynamic_art_handlers();
+
     mpv_get_property(mpv, "playlist-count", MPV_FORMAT_INT64, &ud.playlist_count);
     mpv_get_property(mpv, "playlist-pos", MPV_FORMAT_INT64, &ud.playlist_pos);
 
@@ -1422,6 +1627,7 @@ int mpv_open_cplugin(mpv_handle *mpv)
     g_free(ud.client_name);
     g_free(ud.cached_path);
     g_free(ud.cached_art_url);
+    free_art_handlers(&(ud.dynamic_art_handlers));
 
     return 0;
 }

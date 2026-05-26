@@ -446,6 +446,36 @@ static void add_metadata_content_created(mpv_handle *mpv, GVariantDict *dict)
     mpv_free(date_str);
 }
 
+static gboolean metadata_set_default_string(GVariantDict *dict,
+                                     const char *tag, const char* value){
+    if(!g_variant_dict_contains(dict, tag)){
+        g_variant_dict_insert(dict, tag, "s", value);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static gboolean metadata_set_default_string_list(GVariantDict *dict,
+                                     const char *tag, GVariantBuilder* value){
+    if(!g_variant_dict_contains(dict, tag)){
+        g_variant_dict_insert(dict, tag, "as", value);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static gboolean metadata_set_default_int(GVariantDict *dict,
+                                     const char *tag, int64_t value){
+    if(!g_variant_dict_contains(dict, tag)){
+        g_variant_dict_insert(dict, tag, "x", value);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static GVariant *create_metadata(UserData *ud)
 {
     GVariantDict dict;
@@ -475,6 +505,19 @@ static GVariant *create_metadata(UserData *ud)
     add_metadata_item_string(ud->mpv, &dict, "metadata/by-key/Album", "xesam:album");
     add_metadata_item_string(ud->mpv, &dict, "metadata/by-key/Genre", "xesam:genre");
 
+    { // set album, if none is set
+
+        char *path = mpv_get_property_string(ud->mpv, "path");
+
+        if (path) {
+            gchar *dirname = g_path_get_dirname(path);
+            void* album = string_to_utf8(dirname);
+            metadata_set_default_string(&dict, "xesam:album", album);
+            g_free(album);
+            g_free(dirname);
+        }
+    }
+
     /* Musicbrainz metadata mappings
        (https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html) */
 
@@ -501,6 +544,30 @@ static GVariant *create_metadata(UserData *ud)
 
     add_metadata_item_int(ud->mpv, &dict, "metadata/by-key/Track", "xesam:trackNumber");
     add_metadata_item_int(ud->mpv, &dict, "metadata/by-key/Disc", "xesam:discNumber");
+
+
+    { // set artist, if none is set
+
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
+
+        char *mpvArtists = string_to_utf8("mpv");
+        g_variant_builder_add(&builder, "s", mpvArtists);
+        g_free(mpvArtists);
+
+        metadata_set_default_string_list(&dict,  "xesam:artist", &builder);
+    }
+
+    { // set trackNumber, if none is set
+
+        int64_t trackNumber = -1;
+
+        if (ud->playlist_pos >= 0) {
+            trackNumber = ud->playlist_pos;
+        }
+
+        metadata_set_default_int(&dict,   "xesam:trackNumber", trackNumber);
+    }
 
     add_metadata_uri(ud->mpv, &dict);
     add_metadata_art(ud->mpv, ud->dynamic_art_handlers,&dict);

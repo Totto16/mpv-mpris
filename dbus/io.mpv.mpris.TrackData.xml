@@ -1,5 +1,6 @@
 <node>
   <interface name="io.mpv.mpris.TrackData">
+    <method name="Ping"></method>
     <property name="Filename" type="s" access="read" />
     <property name="Title" type="s" access="read" />
     <property name="Id" type="x" access="read" />

@@ -1371,9 +1371,14 @@ static void method_call_track_data(G_GNUC_UNUSED GDBusConnection *connection,
 {
     fprintf(stderr,"method_call_track_data: %s %s %s\n", sender, _object_path, interface_name);
 
-    g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
-                                            G_DBUS_ERROR_UNKNOWN_METHOD,
-                                            "Unknown method");
+    if (g_strcmp0(method_name, "Ping") == 0) {
+        g_dbus_method_invocation_return_value(invocation, NULL);
+    }else {
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+            G_DBUS_ERROR_UNKNOWN_METHOD,
+            "Unknown method");
+    }
+
 
 }
 
@@ -1618,7 +1623,21 @@ static void set_stopped_status(UserData *ud)
   emit_property_changes(ud);
 }
 
-static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager,gchar* name, TrackInterfaceProperties properties){
+static gboolean
+track_data_on_handle_ping(
+    DBUSIoMpvMprisTrackData *skeleton,
+    GDBusMethodInvocation *invocation,
+    G_GNUC_UNUSED gpointer user_data)
+{
+
+    fprintf(stderr, "PRINT track_data_on_handle_ping\n");
+    dbus_io_mpv_mpris_track_data_complete_ping(
+        skeleton,
+        invocation);
+    return TRUE;
+}
+
+static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager, gchar* name, TrackInterfaceProperties properties){
     GDBusObjectSkeleton *object = g_dbus_object_skeleton_new(name);
 
     DBUSIoMpvMprisTrackData *iface;
@@ -1629,6 +1648,13 @@ static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager,gc
     dbus_io_mpv_mpris_track_data_set_object_path(iface,name);
     dbus_io_mpv_mpris_track_data_set_path(iface,properties.path);
     dbus_io_mpv_mpris_track_data_set_title(iface,properties.title);
+
+    g_signal_connect(
+        iface,
+        "handle-ping",
+        G_CALLBACK(track_data_on_handle_ping),
+        NULL);
+
 
     g_dbus_object_skeleton_add_interface(
         object,
@@ -1657,7 +1683,7 @@ static void setup_track_interface_ids(UserData *ud, TrackList* track_list){
             g_printerr("Failed to register track data interface: %s\n", error->message);
             g_clear_error(&error);
         }
-            fprintf(stderr, "ref_count: %u\n",ud->track_data_interface_info->ref_count);
+        fprintf(stderr, "ref_count: %u\n",ud->track_data_interface_info->ref_count);
 
         track_list->no_track_id =  no_track_id;
     }
@@ -2571,7 +2597,7 @@ static TrackList track_list_empty(void){
 }
 
 // Plugin entry point
-int mpv_open_cplugin(mpv_handle *mpv)
+__attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
 {
     GMainContext *ctx;
     GMainLoop *loop;

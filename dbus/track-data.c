@@ -197,6 +197,49 @@ _g_value_equal (const GValue *a, const GValue *b)
   return ret;
 }
 
+static void
+_g_dbus_codegen_marshal_BOOLEAN__OBJECT (
+    GClosure     *closure,
+    GValue       *return_value,
+    unsigned int  n_param_values,
+    const GValue *param_values,
+    void         *invocation_hint G_GNUC_UNUSED,
+    void         *marshal_data)
+{
+  typedef gboolean (*_GDbusCodegenMarshalBoolean_ObjectFunc)
+       (void *data1,
+        GDBusMethodInvocation *arg_method_invocation,
+        void *data2);
+  _GDbusCodegenMarshalBoolean_ObjectFunc callback;
+  GCClosure *cc = (GCClosure*) closure;
+  void *data1, *data2;
+  gboolean v_return;
+
+  g_return_if_fail (return_value != NULL);
+  g_return_if_fail (n_param_values == 2);
+
+  if (G_CCLOSURE_SWAP_DATA (closure))
+    {
+      data1 = closure->data;
+      data2 = g_value_peek_pointer (param_values + 0);
+    }
+  else
+    {
+      data1 = g_value_peek_pointer (param_values + 0);
+      data2 = closure->data;
+    }
+
+  callback = (_GDbusCodegenMarshalBoolean_ObjectFunc)
+    (marshal_data ? marshal_data : cc->callback);
+
+  v_return =
+    callback (data1,
+              g_marshal_value_peek_object (param_values + 1),
+              data2);
+
+  g_value_set_boolean (return_value, v_return);
+}
+
 /* ------------------------------------------------------------------------
  * Code for interface io.mpv.mpris.TrackData
  * ------------------------------------------------------------------------
@@ -211,6 +254,25 @@ _g_value_equal (const GValue *a, const GValue *b)
  */
 
 /* ---- Introspection data for io.mpv.mpris.TrackData ---- */
+
+static const _ExtendedGDBusMethodInfo _dbus_io_mpv_mpris_track_data_method_info_ping =
+{
+  {
+    -1,
+    (gchar *) "Ping",
+    NULL,
+    NULL,
+    NULL
+  },
+  "handle-ping",
+  FALSE
+};
+
+static const GDBusMethodInfo * const _dbus_io_mpv_mpris_track_data_method_info_pointers[] =
+{
+  &_dbus_io_mpv_mpris_track_data_method_info_ping.parent_struct,
+  NULL
+};
 
 static const _ExtendedGDBusPropertyInfo _dbus_io_mpv_mpris_track_data_property_info_filename =
 {
@@ -297,7 +359,7 @@ static const _ExtendedGDBusInterfaceInfo _dbus_io_mpv_mpris_track_data_interface
   {
     -1,
     (gchar *) "io.mpv.mpris.TrackData",
-    NULL,
+    (GDBusMethodInfo **) &_dbus_io_mpv_mpris_track_data_method_info_pointers,
     NULL,
     (GDBusPropertyInfo **) &_dbus_io_mpv_mpris_track_data_property_info_pointers,
     NULL
@@ -341,6 +403,19 @@ dbus_io_mpv_mpris_track_data_override_properties (GObjectClass *klass, guint pro
 }
 
 
+inline static void
+dbus_io_mpv_mpris_track_data_method_marshal_ping (
+    GClosure     *closure,
+    GValue       *return_value,
+    unsigned int  n_param_values,
+    const GValue *param_values,
+    void         *invocation_hint,
+    void         *marshal_data)
+{
+  _g_dbus_codegen_marshal_BOOLEAN__OBJECT (closure,
+    return_value, n_param_values, param_values, invocation_hint, marshal_data);
+}
+
 
 /**
  * DBUSIoMpvMprisTrackData:
@@ -351,6 +426,7 @@ dbus_io_mpv_mpris_track_data_override_properties (GObjectClass *klass, guint pro
 /**
  * DBUSIoMpvMprisTrackDataIface:
  * @parent_iface: The parent interface.
+ * @handle_ping: Handler for the #DBUSIoMpvMprisTrackData::handle-ping signal.
  * @get_filename: Getter for the #DBUSIoMpvMprisTrackData:filename property.
  * @get_id: Getter for the #DBUSIoMpvMprisTrackData:id property.
  * @get_object_path: Getter for the #DBUSIoMpvMprisTrackData:object-path property.
@@ -366,6 +442,29 @@ G_DEFINE_INTERFACE (DBUSIoMpvMprisTrackData, dbus_io_mpv_mpris_track_data, G_TYP
 static void
 dbus_io_mpv_mpris_track_data_default_init (DBUSIoMpvMprisTrackDataIface *iface)
 {
+  /* GObject signals for incoming D-Bus method calls: */
+  /**
+   * DBUSIoMpvMprisTrackData::handle-ping:
+   * @object: A #DBUSIoMpvMprisTrackData.
+   * @invocation: A #GDBusMethodInvocation.
+   *
+   * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-io-mpv-mpris-TrackData.Ping">Ping()</link> D-Bus method.
+   *
+   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call dbus_io_mpv_mpris_track_data_complete_ping() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+   *
+   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+   */
+  g_signal_new ("handle-ping",
+    G_TYPE_FROM_INTERFACE (iface),
+    G_SIGNAL_RUN_LAST,
+    G_STRUCT_OFFSET (DBUSIoMpvMprisTrackDataIface, handle_ping),
+    g_signal_accumulator_true_handled,
+    NULL,
+      dbus_io_mpv_mpris_track_data_method_marshal_ping,
+    G_TYPE_BOOLEAN,
+    1,
+    G_TYPE_DBUS_METHOD_INVOCATION);
+
   /* GObject properties for D-Bus properties: */
   /**
    * DBUSIoMpvMprisTrackData:filename:
@@ -657,6 +756,116 @@ void
 dbus_io_mpv_mpris_track_data_set_object_path (DBUSIoMpvMprisTrackData *object, const gchar *value)
 {
   g_object_set (G_OBJECT (object), "object-path", value, NULL);
+}
+
+/**
+ * dbus_io_mpv_mpris_track_data_call_ping:
+ * @proxy: A #DBUSIoMpvMprisTrackDataProxy.
+ * @cancellable: (nullable): A #GCancellable or %NULL.
+ * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+ * @user_data: User data to pass to @callback.
+ *
+ * Asynchronously invokes the <link linkend="gdbus-method-io-mpv-mpris-TrackData.Ping">Ping()</link> D-Bus method on @proxy.
+ * When the operation is finished, @callback will be invoked in the thread-default main loop of the thread you are calling this method from (see g_main_context_push_thread_default()).
+ * You can then call dbus_io_mpv_mpris_track_data_call_ping_finish() to get the result of the operation.
+ *
+ * See dbus_io_mpv_mpris_track_data_call_ping_sync() for the synchronous, blocking version of this method.
+ */
+void
+dbus_io_mpv_mpris_track_data_call_ping (
+    DBUSIoMpvMprisTrackData *proxy,
+    GCancellable *cancellable,
+    GAsyncReadyCallback callback,
+    gpointer user_data)
+{
+  g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+    "Ping",
+    g_variant_new ("()"),
+    G_DBUS_CALL_FLAGS_NONE,
+    -1,
+    cancellable,
+    callback,
+    user_data);
+}
+
+/**
+ * dbus_io_mpv_mpris_track_data_call_ping_finish:
+ * @proxy: A #DBUSIoMpvMprisTrackDataProxy.
+ * @res: The #GAsyncResult obtained from the #GAsyncReadyCallback passed to dbus_io_mpv_mpris_track_data_call_ping().
+ * @error: Return location for error or %NULL.
+ *
+ * Finishes an operation started with dbus_io_mpv_mpris_track_data_call_ping().
+ *
+ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+ */
+gboolean
+dbus_io_mpv_mpris_track_data_call_ping_finish (
+    DBUSIoMpvMprisTrackData *proxy,
+    GAsyncResult *res,
+    GError **error)
+{
+  GVariant *_ret;
+  _ret = g_dbus_proxy_call_finish (G_DBUS_PROXY (proxy), res, error);
+  if (_ret == NULL)
+    goto _out;
+  g_variant_get (_ret,
+                 "()");
+  g_variant_unref (_ret);
+_out:
+  return _ret != NULL;
+}
+
+/**
+ * dbus_io_mpv_mpris_track_data_call_ping_sync:
+ * @proxy: A #DBUSIoMpvMprisTrackDataProxy.
+ * @cancellable: (nullable): A #GCancellable or %NULL.
+ * @error: Return location for error or %NULL.
+ *
+ * Synchronously invokes the <link linkend="gdbus-method-io-mpv-mpris-TrackData.Ping">Ping()</link> D-Bus method on @proxy. The calling thread is blocked until a reply is received.
+ *
+ * See dbus_io_mpv_mpris_track_data_call_ping() for the asynchronous version of this method.
+ *
+ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+ */
+gboolean
+dbus_io_mpv_mpris_track_data_call_ping_sync (
+    DBUSIoMpvMprisTrackData *proxy,
+    GCancellable *cancellable,
+    GError **error)
+{
+  GVariant *_ret;
+  _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+    "Ping",
+    g_variant_new ("()"),
+    G_DBUS_CALL_FLAGS_NONE,
+    -1,
+    cancellable,
+    error);
+  if (_ret == NULL)
+    goto _out;
+  g_variant_get (_ret,
+                 "()");
+  g_variant_unref (_ret);
+_out:
+  return _ret != NULL;
+}
+
+/**
+ * dbus_io_mpv_mpris_track_data_complete_ping:
+ * @object: A #DBUSIoMpvMprisTrackData.
+ * @invocation: (transfer full): A #GDBusMethodInvocation.
+ *
+ * Helper function used in service implementations to finish handling invocations of the <link linkend="gdbus-method-io-mpv-mpris-TrackData.Ping">Ping()</link> D-Bus method. If you instead want to finish handling an invocation by returning an error, use g_dbus_method_invocation_return_error() or similar.
+ *
+ * This method will free @invocation, you cannot use it afterwards.
+ */
+void
+dbus_io_mpv_mpris_track_data_complete_ping (
+    DBUSIoMpvMprisTrackData *object G_GNUC_UNUSED,
+    GDBusMethodInvocation *invocation)
+{
+  g_dbus_method_invocation_return_value (invocation,
+    g_variant_new ("()"));
 }
 
 /* ------------------------------------------------------------------------ */

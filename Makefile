@@ -7,7 +7,7 @@ LN := ln
 RM := rm
 
 # Base flags, environment CFLAGS / LDFLAGS can be appended.
-BASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -pedantic $(shell $(PKG_CONFIG) --cflags gio-2.0 gio-unix-2.0 glib-2.0 mpv libavformat)
+BASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -Wpedantic -fvisibility=hidden $(shell $(PKG_CONFIG) --cflags gio-2.0 gio-unix-2.0 glib-2.0 mpv libavformat)
 BASE_LDFLAGS = $(shell $(PKG_CONFIG) --libs gio-2.0 gio-unix-2.0 glib-2.0 libavformat)
 
 SCRIPTS_DIR := $(HOME)/.config/mpv/scripts

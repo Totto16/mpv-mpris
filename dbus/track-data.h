@@ -30,6 +30,11 @@ struct _DBUSIoMpvMprisTrackDataIface
 {
   GTypeInterface parent_iface;
 
+
+  gboolean (*handle_ping) (
+    DBUSIoMpvMprisTrackData *object,
+    GDBusMethodInvocation *invocation);
+
   const gchar * (*get_filename) (DBUSIoMpvMprisTrackData *object);
 
   gint64  (*get_id) (DBUSIoMpvMprisTrackData *object);
@@ -46,6 +51,32 @@ GType dbus_io_mpv_mpris_track_data_get_type (void) G_GNUC_CONST;
 
 GDBusInterfaceInfo *dbus_io_mpv_mpris_track_data_interface_info (void);
 guint dbus_io_mpv_mpris_track_data_override_properties (GObjectClass *klass, guint property_id_begin);
+
+
+/* D-Bus method call completion functions: */
+void dbus_io_mpv_mpris_track_data_complete_ping (
+    DBUSIoMpvMprisTrackData *object,
+    GDBusMethodInvocation *invocation);
+
+
+
+/* D-Bus method calls: */
+void dbus_io_mpv_mpris_track_data_call_ping (
+    DBUSIoMpvMprisTrackData *proxy,
+    GCancellable *cancellable,
+    GAsyncReadyCallback callback,
+    gpointer user_data);
+
+gboolean dbus_io_mpv_mpris_track_data_call_ping_finish (
+    DBUSIoMpvMprisTrackData *proxy,
+    GAsyncResult *res,
+    GError **error);
+
+gboolean dbus_io_mpv_mpris_track_data_call_ping_sync (
+    DBUSIoMpvMprisTrackData *proxy,
+    GCancellable *cancellable,
+    GError **error);
+
 
 
 /* D-Bus property accessors: */

@@ -205,6 +205,12 @@ typedef struct {
     } data;
 } MaybePlaylistInfo;
 
+typedef struct {
+    guint interface_id;
+    guint no_track_id;
+    guint current_track_id;
+    TrackInterfaceIdArray track_interface_ids;
+} TrackList;
 
 typedef struct UserData
 {
@@ -220,7 +226,7 @@ typedef struct UserData
     GDBusInterfaceInfo *track_data_interface_info;
     guint root_interface_id;
     guint player_interface_id;
-    guint track_list_interface_id;
+    TrackList track_list;
     char *client_name;
     const char *status;
     const char *loop_status;
@@ -234,7 +240,6 @@ typedef struct UserData
     MaybePlaylistInfo playlist_info;
     //
     DynamicArtHandlerArray dynamic_art_handlers;
-    TrackInterfaceIdArray track_interface_ids;
 } UserData;
 
 static const char *STATUS_PLAYING = "Playing";
@@ -1571,52 +1576,58 @@ static void set_stopped_status(UserData *ud)
 static void setup_track_interface_ids(UserData *ud){
     GError *error = NULL;
 
-    guint no_track_id =
-                g_dbus_connection_register_object(ud->connection, TRACK_ID_NO_TRACK_INTERFACE,
+    if(ud->track_list.no_track_id == 0){
+        guint no_track_id =
+                    g_dbus_connection_register_object(ud->connection, TRACK_ID_NO_TRACK_INTERFACE,
+                                                    ud->track_data_interface_info,
+                                                    &vtable_track_data,
+                                                    ud, NULL, &error);
+        if (error != NULL) {
+            g_printerr("Failed to register track data interface: %s\n", error->message);
+            g_clear_error(&error);
+        }
+            fprintf(stderr, "ref_count: %u\n",ud->track_data_interface_info->ref_count);
+
+        ud->track_list.no_track_id =  no_track_id;
+    }
+
+    if(ud->track_list.no_track_id == 0){
+        guint current_track_id =
+                g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
                                                 ud->track_data_interface_info,
                                                 &vtable_track_data,
                                                 ud, NULL, &error);
-    if (error != NULL) {
-        g_printerr("Failed to register track data interface: %s\n", error->message);
-        g_clear_error(&error);
+        if (error != NULL) {
+            g_printerr("Failed to register track data interface: %s\n", error->message);
+            g_clear_error(&error);
+        }
+
+        ud->track_list.current_track_id =  current_track_id;
     }
 
-    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), (TrackInterfaceId){.id = no_track_id, .interface_name = NULL});
+    if(ud->track_list.track_interface_ids.count == 0){
+        if(ud->playlist_info.is_in_playlist){
+            PlaylistInfo info = ud->playlist_info.data.playlist;
 
-    guint current_track_id =
-            g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
-                                            ud->track_data_interface_info,
-                                            &vtable_track_data,
-                                            ud, NULL, &error);
-    if (error != NULL) {
-        g_printerr("Failed to register track data interface: %s\n", error->message);
-        g_clear_error(&error);
-    }
+            
+            for(size_t i = 0; i < info.data.count; ++i){
+                gchar *interface_name = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
 
-    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), (TrackInterfaceId){.id = current_track_id, .interface_name = NULL});
+                guint track_id_at_idx =
+                    g_dbus_connection_register_object(ud->connection, interface_name,
+                    ud->track_data_interface_info,
+                    &vtable_track_data,
+                    ud, NULL, &error);
+
+                if (error != NULL) {
+                    g_printerr("Failed to register track data interface: %s\n", error->message);
+                    g_clear_error(&error);
+                }
+
+                tracker_interface_id_array_append_unchecked(&(ud->track_list.track_interface_ids), (TrackInterfaceId){.id = track_id_at_idx, .interface_name = interface_name});
 
 
-    if(ud->playlist_info.is_in_playlist){
-        PlaylistInfo info = ud->playlist_info.data.playlist;
-
-        
-        for(size_t i = 0; i < info.data.count; ++i){
-            gchar *interface_name = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
-
-            guint track_id_at_idx =
-                g_dbus_connection_register_object(ud->connection, interface_name,
-                ud->track_data_interface_info,
-                &vtable_track_data,
-                ud, NULL, &error);
-
-            if (error != NULL) {
-                g_printerr("Failed to register track data interface: %s\n", error->message);
-                g_clear_error(&error);
             }
-
-            tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), (TrackInterfaceId){.id = track_id_at_idx, .interface_name = interface_name});
-
-
         }
     }
 }
@@ -1654,8 +1665,8 @@ static void on_bus_acquired(GDBusConnection *connection,
         }
     }
 
-    if (ud->track_list_interface_id == 0) {
-        ud->track_list_interface_id =
+    if (ud->track_list.interface_id == 0) {
+        ud->track_list.interface_id =
             g_dbus_connection_register_object(connection, "/org/mpris/MediaPlayer2",
                                               ud->track_list_interface_info,
                                               &vtable_track_list,
@@ -1666,9 +1677,7 @@ static void on_bus_acquired(GDBusConnection *connection,
         }
     }
 
-    if(ud->track_interface_ids.count == 0){
-        setup_track_interface_ids(ud);
-    }
+    setup_track_interface_ids(ud);
 
     if (!ud->events_setup) {
         setup_mpv_event_sources(ud);
@@ -1707,6 +1716,15 @@ static char *build_bus_name(const char *client_name, gboolean unique_suffix)
     return g_string_free(name, FALSE);
 }
 
+static void on_name_acquired(G_GNUC_UNUSED GDBusConnection *connection,
+                         G_GNUC_UNUSED const char *_name,
+                         G_GNUC_UNUSED gpointer user_data)
+{
+   //do nothing
+}
+
+static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array);
+
 static void on_name_lost(GDBusConnection *connection,
                          G_GNUC_UNUSED const char *_name,
                          gpointer user_data)
@@ -1722,8 +1740,15 @@ static void on_name_lost(GDBusConnection *connection,
                                     &ud, NULL);
         g_free(name);
     } else {
-      ud->root_interface_id = 0;
-      ud->player_interface_id = 0;
+        ud->root_interface_id = 0;
+        ud->player_interface_id = 0;
+
+        free_track_interface_id_array(ud->connection, &(ud->track_list.track_interface_ids));
+        
+        ud->track_list.interface_id = 0;
+        ud->track_list.no_track_id = 0;
+        ud->track_list.current_track_id = 0;
+
     }
 }
 
@@ -1972,7 +1997,6 @@ static void update_playlist_count(UserData *ud, int64_t count){
 }
 
 static void free_maybe_playlist_info(MaybePlaylistInfo* info);
-static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array);
 static void setup_track_interface_ids(UserData *ud);
 
 static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
@@ -1998,7 +2022,7 @@ static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     PlaylistInfo playlist = playlist_info_get(ud->mpv, (size_t)pos,(size_t)count);
     ud->playlist_info = (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist } };
     
-    free_track_interface_id_array(ud->connection, &(ud->track_interface_ids));
+    free_track_interface_id_array(ud->connection, &(ud->track_list.track_interface_ids));
     setup_track_interface_ids(ud);
 
 }
@@ -2353,7 +2377,11 @@ static void free_maybe_playlist_info(MaybePlaylistInfo* info){
 }
 
 static void free_track_interface_id(GDBusConnection *connection, TrackInterfaceId* interface){
-    g_dbus_connection_unregister_object(connection, interface->id);
+    fprintf(stderr,"free interface id: %u\n", interface->id);
+    gboolean res = g_dbus_connection_unregister_object(connection, interface->id);
+
+    fprintf(stderr, "g_dbus_connection_unregister_object: %d\n", res);
+
     g_free(interface->interface_name);
     interface->interface_name = NULL;
 }
@@ -2397,7 +2425,6 @@ int mpv_open_cplugin(mpv_handle *mpv)
     ud.track_data_interface_info =
         g_dbus_node_info_lookup_interface(introspection_data, "io.mpv.mpris.TrackData");
 
-
     ud.mpv = mpv;
     ud.loop = loop;
     ud.ctx = ctx;
@@ -2409,7 +2436,7 @@ int mpv_open_cplugin(mpv_handle *mpv)
     ud.paused = FALSE;
     ud.shuffle = FALSE;
     ud.dynamic_art_handlers = get_dynamic_art_handlers();
-    ud.track_interface_ids = (TrackInterfaceIdArray){.capacity = 0, .count = 0, .items=NULL};
+    ud.track_list = (TrackList){.current_track_id = 0, .no_track_id = 0, .interface_id = 0, .track_interface_ids = (TrackInterfaceIdArray){ .capacity = 0, .count = 0, .items = NULL }};
     ud.client_name = mpv_get_property_string(mpv, "audio-client-name");
     ud.playlist_info = maybe_playlist_info_init(mpv);
 
@@ -2419,7 +2446,7 @@ int mpv_open_cplugin(mpv_handle *mpv)
                                bus_name,
                                G_BUS_NAME_OWNER_FLAGS_DO_NOT_QUEUE,
                                on_bus_acquired,
-                               NULL,
+                               on_name_acquired,
                                on_name_lost,
                                &ud, NULL);
     g_main_context_pop_thread_default(ctx);
@@ -2443,9 +2470,9 @@ int mpv_open_cplugin(mpv_handle *mpv)
 
     g_dbus_connection_unregister_object(ud.connection, ud.root_interface_id);
     g_dbus_connection_unregister_object(ud.connection, ud.player_interface_id);
-    g_dbus_connection_unregister_object(ud.connection, ud.track_list_interface_id);
+    g_dbus_connection_unregister_object(ud.connection, ud.track_list.interface_id);
 
-    free_track_interface_id_array(ud.connection, &ud.track_interface_ids);
+    free_track_interface_id_array(ud.connection, &ud.track_list.track_interface_ids);
 
     g_bus_unown_name(ud.bus_id);
     g_main_loop_unref(loop);

@@ -99,7 +99,7 @@ static const char *introspection_xml =
     "      <arg type=\"a{sv}\" />\n"
     "    </signal>\n"
     "  </interface>\n"
-    "  <interface name=\"mpv.mpris.TrackData\">\n"
+    "  <interface name=\"io.mpv.mpris.TrackData\">\n"
     "    <property name=\"Filename\" type=\"s\" access=\"read\" />\n"
     "    <property name=\"Title\" type=\"s\" access=\"read\" />\n"
     "    <property name=\"Id\" type=\"x\" access=\"read\" />\n"
@@ -1372,6 +1372,8 @@ static GVariant *get_property_track_data(G_GNUC_UNUSED GDBusConnection *connecti
                                      GError **error,
                                      gpointer user_data)
 {
+
+    fprintf(stderr,"get_property_track_data: %s %s %s %s\n", sender, object_path, interface_name, property_name);
     UserData *ud = (UserData*)user_data;
 
     PlaylistObjectPathInfo obj_info = get_playlist_object_path_info(object_path);
@@ -1602,6 +1604,61 @@ static void set_stopped_status(UserData *ud)
   emit_property_changes(ud);
 }
 
+static void setup_track_interface_ids(UserData *ud){
+    GError *error = NULL;
+
+    TrackInterfaceId no_track_id =
+                g_dbus_connection_register_object(ud->connection, TRACK_ID_NO_TRACK_INTERFACE,
+                                                ud->track_data_interface_info,
+                                                &vtable_track_data,
+                                                ud, NULL, &error);
+    if (error != NULL) {
+        g_printerr("Failed to register track data interface: %s\n", error->message);
+        g_clear_error(&error);
+    }
+
+    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), no_track_id);
+
+    TrackInterfaceId current_track_id =
+            g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
+                                            ud->track_data_interface_info,
+                                            &vtable_track_data,
+                                            ud, NULL, &error);
+    if (error != NULL) {
+        g_printerr("Failed to register track data interface: %s\n", error->message);
+        g_clear_error(&error);
+    }
+
+    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), current_track_id);
+
+
+    if(ud->playlist_info.is_in_playlist){
+        PlaylistInfo info = ud->playlist_info.data.playlist;
+
+        
+        for(size_t i = 0; i < info.data.count; ++i){
+            gchar *temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
+
+            TrackInterfaceId track_id_at_idx =
+                g_dbus_connection_register_object(ud->connection, temp_str,
+                ud->track_data_interface_info,
+                &vtable_track_data,
+                ud, NULL, &error);
+
+            g_free(temp_str);
+
+            if (error != NULL) {
+                g_printerr("Failed to register track data interface: %s\n", error->message);
+                g_clear_error(&error);
+            }
+
+            tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), track_id_at_idx);
+
+
+        }
+    }
+}
+
 // Register D-Bus object and interfaces, then set up mpv event handlers
 static void on_bus_acquired(GDBusConnection *connection,
                             G_GNUC_UNUSED const char *name,
@@ -1648,58 +1705,7 @@ static void on_bus_acquired(GDBusConnection *connection,
     }
 
     if(ud->track_interface_ids.count == 0){
-        TrackInterfaceId no_track_id =
-                g_dbus_connection_register_object(connection, TRACK_ID_NO_TRACK_INTERFACE,
-                                                ud->track_data_interface_info,
-                                                &vtable_track_data,
-                                                user_data, NULL, &error);
-        if (error != NULL) {
-            g_printerr("Failed to register track data interface: %s\n", error->message);
-            g_clear_error(&error);
-        }
-
-        tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), no_track_id);
-
-        TrackInterfaceId current_track_id =
-                g_dbus_connection_register_object(connection, TRACK_ID_CURRENT_INTERFACE,
-                                                ud->track_data_interface_info,
-                                                &vtable_track_data,
-                                                user_data, NULL, &error);
-        if (error != NULL) {
-            g_printerr("Failed to register track data interface: %s\n", error->message);
-            g_clear_error(&error);
-        }
-
-        tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), current_track_id);
-
-
-        if(ud->playlist_info.is_in_playlist){
-            PlaylistInfo info = ud->playlist_info.data.playlist;
-
-            
-            for(size_t i = 0; i < info.data.count; ++i){
-                gchar *temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
-
-                TrackInterfaceId track_id_at_idx =
-                    g_dbus_connection_register_object(connection, temp_str,
-                    ud->track_data_interface_info,
-                    &vtable_track_data,
-                    user_data, NULL, &error);
-
-                g_free(temp_str);
-
-                if (error != NULL) {
-                    g_printerr("Failed to register track data interface: %s\n", error->message);
-                    g_clear_error(&error);
-                }
-
-                tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), track_id_at_idx);
-
-
-            }
-        }
-
-
+        setup_track_interface_ids(ud);
     }
 
     if (!ud->events_setup) {
@@ -1817,21 +1823,21 @@ static void on_name_lost(GDBusConnection *connection,
     }
 }
 
-static void update_playlist_data_by_new_count_impl(mpv_handle *mpv, MaybePlaylistInfo *info, int64_t count);
+static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count);
 
-static void update_playlist_pos(mpv_handle *mpv, MaybePlaylistInfo *info, int64_t pos){
-    if(!info->is_in_playlist){
+static void update_playlist_pos(UserData *ud, int64_t pos){
+    if(!ud->playlist_info.is_in_playlist){
 
         int64_t count = 0;
 
-        mpv_get_property(mpv, "playlist-count", MPV_FORMAT_INT64, &count);
+        mpv_get_property(ud->mpv, "playlist-count", MPV_FORMAT_INT64, &count);
 
         if(count < 0){
             g_printerr("Invalid playlist count: %ld, in updating pos\n", count);
             return;
         }
 
-        update_playlist_data_by_new_count_impl(mpv, info, count);
+        update_playlist_data_by_new_count_impl(ud, count);
 
         return;
     }
@@ -1841,7 +1847,7 @@ static void update_playlist_pos(mpv_handle *mpv, MaybePlaylistInfo *info, int64_
         return;
     }
 
-    info->data.playlist.current_pos = pos;
+    ud->playlist_info.data.playlist.current_pos = pos;
 }
 
 static void free_tracker_interface_properties(TrackInterfaceProperties* properties){
@@ -1864,8 +1870,6 @@ static void free_tracker_interface_properties_array(TrackInterfacePropertiesArra
 
 static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count){
     mpv_node node;
-
-    fprintf(stderr, "get playlist\n");
 
     int result = mpv_get_property(mpv, "playlist", MPV_FORMAT_NODE, &node);
 
@@ -2052,25 +2056,27 @@ static MaybePlaylistInfo maybe_playlist_info_init(mpv_handle *mpv){
 
 }
 
-static void update_playlist_count(mpv_handle *mpv, MaybePlaylistInfo *info, int64_t count){
+static void update_playlist_count(UserData *ud, int64_t count){
 
-    if(!info->is_in_playlist){
+    if(!ud->playlist_info.is_in_playlist){
         g_printerr("Update of count not allowed in case of a missing playlist\n");
         return;
     }
 
-    update_playlist_data_by_new_count_impl(mpv, info, count);
+    update_playlist_data_by_new_count_impl(ud, count);
 
 }
 
 static void free_maybe_playlist_info(MaybePlaylistInfo* info);
+static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array);
+static void setup_track_interface_ids(UserData *ud);
 
-static void update_playlist_data_by_new_count_impl(mpv_handle *mpv, MaybePlaylistInfo *info, int64_t count){
+static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     //TODO: emit signals
 
     int64_t pos = 0;
 
-    mpv_get_property(mpv, "playlist-pos", MPV_FORMAT_INT64, &pos);
+    mpv_get_property(ud->mpv, "playlist-pos", MPV_FORMAT_INT64, &pos);
 
     if(pos < 0){
         g_printerr("Invalid playlist pos: %ld, not allowed in case of a playlist\n", pos);
@@ -2083,10 +2089,14 @@ static void update_playlist_data_by_new_count_impl(mpv_handle *mpv, MaybePlaylis
     }
 
     
-    free_maybe_playlist_info(info);
+    free_maybe_playlist_info(&(ud->playlist_info));
+    
+    PlaylistInfo playlist = playlist_info_get(ud->mpv, (size_t)pos,(size_t)count);
+    ud->playlist_info = (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist } };
+    
+    free_track_interface_id_array(ud->connection, &(ud->track_interface_ids));
+    setup_track_interface_ids(ud);
 
-    PlaylistInfo playlist = playlist_info_get(mpv, (size_t)pos,(size_t)count);
-    *info = (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist } };
 }
 
 static void handle_property_change(const char *name, void *data, UserData *ud)
@@ -2177,13 +2187,11 @@ static void handle_property_change(const char *name, void *data, UserData *ud)
 
     } else if (g_strcmp0(name, "playlist-count") == 0 || g_strcmp0(name, "playlist/count") == 0) {
       const int64_t playlist_count = *(int64_t *)data;
-      fprintf(stderr, "playlist-count: %ld\n",playlist_count);
-      update_playlist_count(ud->mpv, &ud->playlist_info, playlist_count);
+      update_playlist_count(ud, playlist_count);
       update_can_go_next_prev = TRUE;
     } else if (g_strcmp0(name, "playlist-pos") == 0) {
       const int64_t playlist_pos = *(int64_t *)data;
-      fprintf(stderr, "playlist-pos: %ld\n",playlist_pos);
-      update_playlist_pos(ud->mpv,&ud->playlist_info, playlist_pos);
+      update_playlist_pos(ud, playlist_pos);
       update_can_go_next_prev = TRUE;
     }
 
@@ -2492,7 +2500,7 @@ int mpv_open_cplugin(mpv_handle *mpv)
     ud.track_list_interface_info =
         g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2.TrackList");
     ud.track_data_interface_info =
-        g_dbus_node_info_lookup_interface(introspection_data, "mpv.mpris.TrackData");
+        g_dbus_node_info_lookup_interface(introspection_data, "io.mpv.mpris.TrackData");
 
 
     ud.mpv = mpv;
@@ -2511,7 +2519,7 @@ int mpv_open_cplugin(mpv_handle *mpv)
     ud.client_name = g_strdup(client_name);
     mpv_free(client_name);
     ud.dynamic_art_handlers = get_dynamic_art_handlers();
-    ud.track_interface_ids = (TrackInterfaceIdArray){.capacity = 0,.count = 0, .items=NULL};
+    ud.track_interface_ids = (TrackInterfaceIdArray){.capacity = 0, .count = 0, .items=NULL};
     ud.client_name = mpv_get_property_string(mpv, "audio-client-name");
     ud.playlist_info = maybe_playlist_info_init(mpv);
 

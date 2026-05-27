@@ -65,6 +65,46 @@ static const char *introspection_xml =
     "    <property name=\"CanSeek\" type=\"b\" access=\"read\"/>\n"
     "    <property name=\"CanControl\" type=\"b\" access=\"read\"/>\n"
     "  </interface>\n"
+    "  <interface name=\"org.mpris.MediaPlayer2.TrackList\">\n"
+    "    <property name=\"Tracks\" type=\"ao\" access=\"read\" />\n"
+    "    <property name=\"CanEditTracks\" type=\"b\" access=\"read\" />\n"
+    "    <method name=\"GetTracksMetadata\">\n"
+    "      <arg type=\"ao\" direction=\"in\" />\n"
+    "      <arg type=\"aa{sv}\" direction=\"out\" />\n"
+    "    </method>\n"
+    "    <method name=\"AddTrack\">\n"
+    "      <arg type=\"s\" direction=\"in\" />\n"
+    "      <arg type=\"o\" direction=\"in\" />\n"
+    "      <arg type=\"b\" direction=\"in\" />\n"
+    "    </method>\n"
+    "    <method name=\"RemoveTrack\">\n"
+    "      <arg type=\"o\" direction=\"in\" />\n"
+    "    </method>\n"
+    "    <method name=\"GoTo\">\n"
+    "      <arg type=\"o\" direction=\"in\" />\n"
+    "    </method>\n"
+    "    <signal name=\"TrackListReplaced\">\n"
+    "      <arg type=\"ao\" />\n"
+    "      <arg type=\"o\" />\n"
+    "    </signal>\n"
+    "    <signal name=\"TrackAdded\">\n"
+    "      <arg type=\"a{sv}\" />\n"
+    "      <arg type=\"o\" />\n"
+    "    </signal>\n"
+    "    <signal name=\"TrackRemoved\">\n"
+    "      <arg type=\"o\" />\n"
+    "    </signal>\n"
+    "    <signal name=\"TrackMetadataChanged\">\n"
+    "      <arg type=\"o\" />\n"
+    "      <arg type=\"a{sv}\" />\n"
+    "    </signal>\n"
+    "  </interface>\n"
+    "  <interface name=\"mpv.mpris.TrackData\">\n"
+    "    <property name=\"Filename\" type=\"s\" access=\"read\" />\n"
+    "    <property name=\"Title\" type=\"s\" access=\"read\" />\n"
+    "    <property name=\"Id\" type=\"x\" access=\"read\" />\n"
+    "    <property name=\"Path\" type=\"s\" access=\"read\" />\n"
+    "    <property name=\"ObjectPath\" type=\"s\" access=\"read\" />\n"
     "</node>\n";
 
 typedef struct {
@@ -74,7 +114,7 @@ typedef struct {
     //
     gchar*(*try_get_art)(mpv_handle *mpv, char *path, void* state);
     void(*free_state)(void* state);
-}DynamicArtHandler;
+} DynamicArtHandler;
 
 typedef struct {
     DynamicArtHandler* items;
@@ -82,10 +122,15 @@ typedef struct {
     size_t capacity;
 } DynamicArtHandlerArray;
 
-#define START_ARRAY_CAP 8
-#define ARRAY_CAP_GROW(cap) (cap)*2
+#define START_ARRAY_CAP (8)
+#define ARRAY_CAP_GROW(cap) ((cap)*2)
 
-void dynamic_art_handlers_append_unchecked(DynamicArtHandlerArray* array, DynamicArtHandler item){
+#define ARRAY_ASSERT_IDX_IN_BOUNDS(arr, idx) ((((arr).count) >= (idx)) ? g_printerr("Array access out of bounds: size is %zu, idx was %zu", (arr).count, idx) : (void)NULL)
+
+#define ARRAY_AT(arr, idx) (arr).items[ARRAY_ASSERT_IDX_IN_BOUNDS((arr), (idx)), idx]
+#define ARRAY_MUT_AT(arr, idx) &((arr)->items[ARRAY_ASSERT_IDX_IN_BOUNDS((*(arr)), (idx)), idx])
+
+static void dynamic_art_handler_array_append_unchecked(DynamicArtHandlerArray* array, DynamicArtHandler item){
     if(array->capacity <= array->count){
         array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW( array->capacity);
     
@@ -95,6 +140,65 @@ void dynamic_art_handlers_append_unchecked(DynamicArtHandlerArray* array, Dynami
     array->items[array->count] = item;
     array->count++;
 }
+
+typedef guint TrackInterfaceId;
+
+typedef struct {
+    TrackInterfaceId* items;
+    size_t count;
+    size_t capacity;
+} TrackInterfaceIdArray;
+
+
+static void tracker_interface_id_array_append_unchecked(TrackInterfaceIdArray* array, TrackInterfaceId item){
+    if(array->capacity <= array->count){
+        array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW(array->capacity);
+    
+        array->items = g_realloc(array->items,sizeof(TrackInterfaceId) * array->capacity);
+    }
+
+    array->items[array->count] = item;
+    array->count++;
+}
+
+typedef struct {
+    gchar* filename;
+    gchar* title;
+    int64_t id;
+    gchar* path;
+} TrackInterfaceProperties;
+
+typedef struct {
+    TrackInterfaceProperties* items;
+    size_t count;
+    size_t capacity;
+} TrackInterfacePropertiesArray;
+
+
+static void tracker_interface_properties_array_append_unchecked(TrackInterfacePropertiesArray* array, TrackInterfaceProperties item){
+    if(array->capacity <= array->count){
+        array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW(array->capacity);
+    
+        array->items = g_realloc(array->items,sizeof(TrackInterfaceProperties) * array->capacity);
+    }
+
+    array->items[array->count] = item;
+    array->count++;
+}
+
+
+typedef struct {
+    TrackInterfacePropertiesArray data;
+    size_t current_pos;
+} PlaylistInfo;
+
+typedef struct {
+    gboolean is_in_playlist;
+    union {
+        TrackInterfaceProperties single;
+        PlaylistInfo playlist;
+    } data;
+} MaybePlaylistInfo;
 
 
 typedef struct UserData
@@ -107,8 +211,11 @@ typedef struct UserData
     GDBusConnection *connection;
     GDBusInterfaceInfo *root_interface_info;
     GDBusInterfaceInfo *player_interface_info;
+    GDBusInterfaceInfo *track_list_interface_info;
+    GDBusInterfaceInfo *track_data_interface_info;
     guint root_interface_id;
     guint player_interface_id;
+    guint track_list_interface_id;
     char *client_name;
     const char *status;
     const char *loop_status;
@@ -119,10 +226,10 @@ typedef struct UserData
     gboolean idle;
     gboolean paused;
     gboolean events_setup;
-    int64_t playlist_count;
-    int64_t playlist_pos;
+    MaybePlaylistInfo playlist_info;
     //
     DynamicArtHandlerArray dynamic_art_handlers;
+    TrackInterfaceIdArray track_interface_ids;
 } UserData;
 
 static const char *STATUS_PLAYING = "Playing";
@@ -212,16 +319,9 @@ static gchar *path_to_uri(mpv_handle *mpv, char *path)
     return uri;
 }
 
-static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
+static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, char *path)
 {
-    char *path;
     char *uri;
-
-    path = mpv_get_property_string(mpv, "path");
-    if (!path) {
-        return;
-    }
-
     uri = g_uri_parse_scheme(path);
     if (uri) {
         g_variant_dict_insert(dict, "xesam:url", "s", path);
@@ -233,6 +333,16 @@ static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
     }
 
     mpv_free(path);
+}
+
+static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
+{
+    char *path = mpv_get_property_string(mpv, "path");
+    if (!path) {
+        return;
+    }
+
+    add_metadata_uri_by_path(mpv, dict, path);
 }
 
 static gchar* try_get_cover_art_file(mpv_handle *mpv)
@@ -395,14 +505,8 @@ static char *cached_path = NULL;
 // cached last artwork url, owned by glib
 static gchar *cached_art_url = NULL;
 
-static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict)
+static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict, char* path)
 {
-    char *path = mpv_get_property_string(mpv, "path");
-
-    if (!path) {
-        return;
-    }
-
     // mpv may call create_metadata multiple times, so cache to save CPU
     if (!cached_path || strcmp(path, cached_path)) {
         mpv_free(cached_path);
@@ -416,6 +520,16 @@ static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art
     if (cached_art_url) {
         g_variant_dict_insert(dict, "mpris:artUrl", "s", cached_art_url);
     }
+}
+
+static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict)
+{
+    char *path = mpv_get_property_string(mpv, "path");
+    if (!path) {
+        return;
+    }
+
+    add_metadata_art_by_path(mpv, dynamic_art_handlers, dict, path);
 }
 
 static void add_metadata_content_created(mpv_handle *mpv, GVariantDict *dict)
@@ -476,23 +590,71 @@ static gboolean metadata_set_default_int(GVariantDict *dict,
     return FALSE;
 }
 
+#define TRACK_ID_NO_TRACK_INTERFACE "/org/mpris/MediaPlayer2/TrackList/NoTrack"
+
+#define TRACK_ID_CURRENT_INTERFACE "/io/mpv/MPRIS/TrackList/Current"
+
+#define TRACK_ID_INTERFACE_ROOT "/io/mpv/MPRIS/TrackList/ByNumber/"
+
+#define TRACK_ID_INTERFACE_FMT  TRACK_ID_INTERFACE_ROOT "%" PRIu64
+
+typedef enum {
+    PlaylistObjectPathInfoTypeNoTrack = 0,
+    PlaylistObjectPathInfoTypeTrack,
+    PlaylistObjectPathInfoTypeCurrentTrack,
+    PlaylistObjectPathInfoTypeError
+} PlaylistObjectPathInfoType;
+
+typedef struct {
+    PlaylistObjectPathInfoType type;
+    union{
+        size_t track_number;
+        const char* error;
+    } data;
+} PlaylistObjectPathInfo;
+
+static PlaylistObjectPathInfo get_playlist_object_path_info(const char *object_path){
+    if(g_strcmp0(object_path,TRACK_ID_NO_TRACK_INTERFACE) == 0){
+        return (PlaylistObjectPathInfo){.type = PlaylistObjectPathInfoTypeNoTrack };
+    } else if(g_strcmp0(object_path,TRACK_ID_CURRENT_INTERFACE) == 0){
+        return (PlaylistObjectPathInfo){.type = PlaylistObjectPathInfoTypeCurrentTrack };
+    } else if(g_str_has_prefix(object_path,TRACK_ID_INTERFACE_ROOT) == 0){
+        const char* number_part = object_path + sizeof(TRACK_ID_INTERFACE_ROOT);
+        gchar* end_ptr = NULL;
+        errno = 0;
+        guint64 result = g_ascii_strtoull(number_part, &end_ptr, 10);
+        if(errno != 0 || end_ptr == NULL || *end_ptr != '\0'){
+            return (PlaylistObjectPathInfo){ .type = PlaylistObjectPathInfoTypeError, .data = { .error = "Invalid Object Path Encoded Number" }};
+        }
+
+        return (PlaylistObjectPathInfo){ .type = PlaylistObjectPathInfoTypeTrack, .data = { .track_number = result }};
+    }else{
+        return (PlaylistObjectPathInfo){ .type = PlaylistObjectPathInfoTypeError, .data = { .error = "Invalid Object Path" }};
+    }
+}
+
 static GVariant *create_metadata(UserData *ud)
 {
     GVariantDict dict;
     double duration;
-    char *temp_str;
+    gchar *temp_str;
     int res;
 
     g_variant_dict_init(&dict, NULL);
 
     // mpris:trackid
-    // playlist_pos < 0 if there is no playlist or current track
-    if (ud->playlist_pos < 0) {
-        temp_str = g_strdup("/noplaylist");
+    if (!ud->playlist_info.is_in_playlist) {
+        temp_str = g_strdup(TRACK_ID_CURRENT_INTERFACE);
     } else {
-        temp_str = g_strdup_printf("/%" PRId64, ud->playlist_pos);
+        PlaylistInfo info = ud->playlist_info.data.playlist;
+        temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, info.current_pos);
     }
-    g_variant_dict_insert(&dict, "mpris:trackid", "o", temp_str);
+
+    if(g_variant_is_object_path(temp_str)){
+        g_variant_dict_insert(&dict, "mpris:trackid", "o", temp_str);
+    }else{
+        g_variant_dict_insert(&dict, "mpris:trackid", "o", TRACK_ID_NO_TRACK_INTERFACE);
+    }
     g_free(temp_str);
 
     // mpris:length
@@ -560,18 +722,69 @@ static GVariant *create_metadata(UserData *ud)
 
     { // set trackNumber, if none is set
 
-        int64_t trackNumber = -1;
-
-        if (ud->playlist_pos >= 0) {
-            trackNumber = ud->playlist_pos;
+        if (ud->playlist_info.is_in_playlist) {
+            PlaylistInfo info = ud->playlist_info.data.playlist;
+            metadata_set_default_int(&dict, "xesam:trackNumber", (int64_t)info.current_pos);
+        }else{
+            metadata_set_default_int(&dict, "xesam:trackNumber", (int64_t)0);
         }
 
-        metadata_set_default_int(&dict,   "xesam:trackNumber", trackNumber);
     }
 
     add_metadata_uri(ud->mpv, &dict);
     add_metadata_art(ud->mpv, ud->dynamic_art_handlers,&dict);
     add_metadata_content_created(ud->mpv, &dict);
+
+    return g_variant_dict_end(&dict);
+}
+
+static GVariant *create_metadata_for_track(UserData *ud, TrackInterfaceProperties properties, size_t track_idx)
+{
+    //TODO: if possible, how to unify "create_metadata" and "create_metadata_for_track"
+
+    GVariantDict dict;
+    gchar *temp_str;
+
+    g_variant_dict_init(&dict, NULL);
+
+    temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, track_idx);
+    g_free(temp_str);
+
+    { // set album, if none is set
+
+        if (properties.path) {
+            gchar *dirname = g_path_get_dirname(properties.path);
+            void* album = string_to_utf8(dirname);
+            metadata_set_default_string(&dict, "xesam:album", album);
+            g_free(album);
+            g_free(dirname);
+
+            add_metadata_uri_by_path(ud->mpv, &dict, g_strdup(properties.path));
+            add_metadata_art_by_path(ud->mpv, ud->dynamic_art_handlers,&dict, g_strdup(properties.path));
+        }
+    }
+
+    { // set artist, if none is set
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
+
+        char *mpvArtists = string_to_utf8("mpv");
+        g_variant_builder_add(&builder, "s", mpvArtists);
+        g_free(mpvArtists);
+
+        metadata_set_default_string_list(&dict,  "xesam:artist", &builder);
+    }
+
+    { // set artist, if none is set
+        
+        if (properties.title) {
+            metadata_set_default_string(&dict,  "xesam:title",properties.title);
+        }
+    }
+
+    { // set trackNumber, if none is set
+        metadata_set_default_int(&dict, "xesam:trackNumber", (int64_t)track_idx);
+    }
 
     return g_variant_dict_end(&dict);
 }
@@ -766,19 +979,68 @@ static void method_call_player(G_GNUC_UNUSED GDBusConnection *connection,
         g_free(offset_str);
 
     } else if (g_strcmp0(method_name, "SetPosition") == 0) {
-        char *object_path;
+        const char *object_path;
         double new_position_s;
         int64_t new_position_us;
 
         g_variant_get(parameters, "(&ox)", &object_path, &new_position_us);
         new_position_s = ((float)new_position_us) / 1000000.0; // us -> s
+        
+        PlaylistObjectPathInfo info = get_playlist_object_path_info(object_path);
 
-        if (ud->playlist_pos == g_ascii_strtoll(object_path + 1, NULL, 10)) {
-            mpv_set_property(ud->mpv, "time-pos", MPV_FORMAT_DOUBLE, &new_position_s);
+        switch (info.type){
+            case PlaylistObjectPathInfoTypeError:{
+            g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                                G_DBUS_ERROR_INVALID_ARGS,
+                                                "Invalid Object Path: %s", info.data.error);
+                return;
+            }
+            case PlaylistObjectPathInfoTypeNoTrack:{
+                g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                                G_DBUS_ERROR_INVALID_ARGS,
+                                                "Invalid Object Path: Only possible value is the trackid of the current track, but got 'No Track'");
+                return;
+            }
+            case PlaylistObjectPathInfoTypeCurrentTrack:{
+                if(ud->playlist_info.is_in_playlist){
+                    g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                                G_DBUS_ERROR_INVALID_ARGS,
+                                                "Invalid Object Path: Only possible value is the trackid of the current track, error type 1");
+                    return;
+                }else{
+                    // ok, can set time
+                }
+                break;
+            }
+            case PlaylistObjectPathInfoTypeTrack: {
+                if(!ud->playlist_info.is_in_playlist){
+                    g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                                G_DBUS_ERROR_INVALID_ARGS,
+                                                "Invalid Object Path: Only possible value is the trackid of the current track, error type 2");
+                    return;
+                }else{
+                    if(ud->playlist_info.data.playlist.current_pos == info.data.track_number){
+                        // ok, can set time
+                    }else{
+                        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                                G_DBUS_ERROR_INVALID_ARGS,
+                                                "Invalid Object Path: Only possible value is the trackid of the current track, error type 3");
+                        return;
+                    }
+                }
+                break;
+            }
+            default:{
+                g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                                G_DBUS_ERROR_INVALID_ARGS,
+                                                "Invalid Object Path: Only possible value is the trackid of the current track, error in object path parsing");
+                return;
+            }
         }
 
-        g_dbus_method_invocation_return_value(invocation, NULL);
+        mpv_set_property(ud->mpv, "time-pos", MPV_FORMAT_DOUBLE, &new_position_s);
 
+        g_dbus_method_invocation_return_value(invocation, NULL);
     } else if (g_strcmp0(method_name, "OpenUri") == 0) {
         char *uri;
         g_variant_get(parameters, "(&s)", &uri);
@@ -934,6 +1196,249 @@ static GDBusInterfaceVTable vtable_player = {
     method_call_player, get_property_player, set_property_player, {0}
 };
 
+static void method_call_track_list(G_GNUC_UNUSED GDBusConnection *connection,
+                               G_GNUC_UNUSED const char *sender,
+                               G_GNUC_UNUSED const char *_object_path,
+                               G_GNUC_UNUSED const char *interface_name,
+                               const char *method_name,
+                               G_GNUC_UNUSED GVariant *parameters,
+                               GDBusMethodInvocation *invocation,
+                               gpointer user_data)
+{
+    UserData *ud = (UserData*)user_data;
+    if (g_strcmp0(method_name, "GetTracksMetadata") == 0) {
+        
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("aa{sv}"));
+
+        if(ud->playlist_info.is_in_playlist){
+
+            PlaylistInfo info = ud->playlist_info.data.playlist;
+
+            GVariantBuilder builder;
+            g_variant_builder_init(&builder, G_VARIANT_TYPE("ao"));
+
+            for(size_t i = 0; i < info.data.count; ++i){
+                GVariant* track = create_metadata_for_track(ud, ARRAY_AT(info.data, i), i);
+
+            g_variant_builder_add(&builder, "a{sv}", track);
+            }
+            
+        }else{
+            GVariant* track = create_metadata_for_track(ud, ud->playlist_info.data.single, 0);
+
+            g_variant_builder_add(&builder, "a{sv}", track);
+        }
+
+        g_dbus_method_invocation_return_value(invocation, g_variant_new ("(aa{sv})", g_variant_builder_end(&builder)));
+    } else if (g_strcmp0(method_name, "AddTrack") == 0) {
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                              G_DBUS_ERROR_NOT_SUPPORTED,
+                                              "Not Supported Method");
+    } else if (g_strcmp0(method_name, "RemoveTrack") == 0) {
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                              G_DBUS_ERROR_NOT_SUPPORTED,
+                                              "Not Supported Method");
+    } else if (g_strcmp0(method_name, "GoTo") == 0) {
+        //TODO
+        g_dbus_method_invocation_return_value(invocation, NULL);
+    } else {
+        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                              G_DBUS_ERROR_UNKNOWN_METHOD,
+                                              "Unknown method");
+    }
+}
+
+//TODO: emit track signals, in appropiate cases
+static GVariant *get_property_track_list(G_GNUC_UNUSED GDBusConnection *connection,
+                                     G_GNUC_UNUSED const char *sender,
+                                     G_GNUC_UNUSED const char *object_path,
+                                     G_GNUC_UNUSED const char *interface_name,
+                                     const char *property_name,
+                                     GError **error,
+                                     gpointer user_data)
+{
+    UserData *ud = (UserData*)user_data;
+    GVariant *ret;
+    if (g_strcmp0(property_name, "Tracks") == 0) {
+
+        if(ud->playlist_info.is_in_playlist){
+
+            PlaylistInfo info = ud->playlist_info.data.playlist;
+
+            GVariantBuilder builder;
+            g_variant_builder_init(&builder, G_VARIANT_TYPE("ao"));
+
+            for(size_t i = 0; i < info.data.count; ++i){
+                gchar *temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
+
+                g_variant_builder_add(&builder, "o", temp_str);
+                g_free(temp_str);
+            }
+            
+
+            ret = g_variant_builder_end(&builder);
+        }else{
+            ret = g_variant_new_object_path(TRACK_ID_CURRENT_INTERFACE);
+        }
+
+        
+    } else if (g_strcmp0(property_name, "CanEditTracks") == 0) {
+        ret = g_variant_new_boolean(FALSE);
+
+    } else {
+        ret = NULL;
+        g_set_error(error, G_DBUS_ERROR,
+                    G_DBUS_ERROR_UNKNOWN_PROPERTY,
+                    "Unknown property %s", property_name);
+    }
+
+    return ret;
+}
+
+static gboolean set_property_track_list(G_GNUC_UNUSED GDBusConnection *connection,
+                                    G_GNUC_UNUSED const char *sender,
+                                    G_GNUC_UNUSED const char *object_path,
+                                    G_GNUC_UNUSED const char *interface_name,
+                                    const char *property_name,
+                                    G_GNUC_UNUSED GVariant *value,
+                                    G_GNUC_UNUSED GError **error,
+                                    G_GNUC_UNUSED gpointer user_data)
+{
+    g_set_error(error, G_DBUS_ERROR,
+                G_DBUS_ERROR_UNKNOWN_PROPERTY,
+                "Cannot set property %s", property_name);
+    return FALSE;
+}
+
+static GDBusInterfaceVTable vtable_track_list = {
+    method_call_track_list, get_property_track_list, set_property_track_list, {0}
+};
+
+static void method_call_track_data(G_GNUC_UNUSED GDBusConnection *connection,
+                               G_GNUC_UNUSED const char *sender,
+                               G_GNUC_UNUSED const char *_object_path,
+                               G_GNUC_UNUSED const char *interface_name,
+                               G_GNUC_UNUSED const char *method_name,
+                               G_GNUC_UNUSED GVariant *parameters,
+                               GDBusMethodInvocation *invocation,
+                               G_GNUC_UNUSED gpointer user_data)
+{
+    g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
+                                            G_DBUS_ERROR_UNKNOWN_METHOD,
+                                            "Unknown method");
+
+}
+
+static GVariant *get_property_track_data(G_GNUC_UNUSED GDBusConnection *connection,
+                                     G_GNUC_UNUSED const char *sender,
+                                    const char *object_path,
+                                     G_GNUC_UNUSED const char *interface_name,
+                                     const char *property_name,
+                                     GError **error,
+                                     gpointer user_data)
+{
+    UserData *ud = (UserData*)user_data;
+
+    PlaylistObjectPathInfo obj_info = get_playlist_object_path_info(object_path);
+    
+    TrackInterfaceProperties properties = {.filename = NULL, .title = NULL,.id = 0,.path = NULL};
+
+    switch (obj_info.type){
+        case PlaylistObjectPathInfoTypeError:{
+            g_set_error(error, G_DBUS_ERROR,
+                    G_DBUS_ERROR_UNKNOWN_OBJECT,
+                    "Invalid Object Path: %s", obj_info.data.error);
+            return NULL;
+        }
+        case PlaylistObjectPathInfoTypeNoTrack:{
+            properties = (TrackInterfaceProperties){.filename = NULL, .title = NULL,.id = 0,.path = NULL};
+            break;
+        }
+        case PlaylistObjectPathInfoTypeCurrentTrack:{
+            if(ud->playlist_info.is_in_playlist){
+                PlaylistInfo info = ud->playlist_info.data.playlist;
+                
+                properties = ARRAY_AT(info.data, info.current_pos);
+            }else{
+                properties = ud->playlist_info.data.single;
+            }
+            break;
+        }
+        case PlaylistObjectPathInfoTypeTrack:{
+            if(ud->playlist_info.is_in_playlist){
+                PlaylistInfo info = ud->playlist_info.data.playlist;
+                
+                properties = ARRAY_AT(info.data,obj_info.data.track_number);
+            }else{
+                g_set_error(error, G_DBUS_ERROR,
+                        G_DBUS_ERROR_UNKNOWN_OBJECT,
+                        "Invalid Object Path: Trying to use type track in without playlist");
+                return NULL;
+            }
+            break;
+        }
+        default:{
+            g_set_error(error, G_DBUS_ERROR,
+                    G_DBUS_ERROR_UNKNOWN_OBJECT,
+                    "Invalid Object Path: Only possible value is the trackid of the current track, error in object path parsing");
+            return NULL;
+        }
+    }
+
+    GVariant *ret;
+    if (g_strcmp0(property_name, "Filename") == 0) {
+        if(properties.filename == NULL){
+            ret = g_variant_new_string("");
+        }else{
+            ret = g_variant_new_string(properties.filename);
+        }
+    } else if (g_strcmp0(property_name, "Title") == 0) {
+        if(properties.title == NULL){
+            ret = g_variant_new_string("");
+        }else{
+            ret = g_variant_new_string(properties.title);
+        }
+    } else if (g_strcmp0(property_name, "Id") == 0) {
+        ret = g_variant_new_string("");
+    } else if (g_strcmp0(property_name, "Path") == 0) {
+        if(properties.path == NULL){
+            ret = g_variant_new_string("");
+        }else{
+            ret = g_variant_new_string(properties.path);
+        }
+    } else if (g_strcmp0(property_name, "ObjectPath") == 0) {
+        ret = g_variant_new_string(object_path);
+    } else {
+        ret = NULL;
+        g_set_error(error, G_DBUS_ERROR,
+                    G_DBUS_ERROR_UNKNOWN_PROPERTY,
+                    "Unknown property %s", property_name);
+    }
+
+    return ret;
+}
+
+static gboolean set_property_track_data(G_GNUC_UNUSED GDBusConnection *connection,
+                                    G_GNUC_UNUSED const char *sender,
+                                    G_GNUC_UNUSED const char *object_path,
+                                    G_GNUC_UNUSED const char *interface_name,
+                                    const char *property_name,
+                                    G_GNUC_UNUSED GVariant *value,
+                                    G_GNUC_UNUSED GError **error,
+                                    G_GNUC_UNUSED gpointer user_data)
+{
+    g_set_error(error, G_DBUS_ERROR,
+                G_DBUS_ERROR_UNKNOWN_PROPERTY,
+                "Cannot set property %s", property_name);
+    return FALSE;
+}
+
+static GDBusInterfaceVTable vtable_track_data = {
+    method_call_track_data, get_property_track_data, set_property_track_data, {0}
+};
+
+
 static gboolean emit_property_changes(gpointer data)
 {
     UserData *ud = (UserData*)data;
@@ -997,24 +1502,35 @@ static void emit_seeked_signal(UserData *ud)
 
 static gboolean can_go_next(UserData *ud)
 {
-    if (ud->playlist_pos < 0 || ud->playlist_count <= 0)
+    if (!ud->playlist_info.is_in_playlist)
         return FALSE;
-    if (ud->playlist_count == 1)
+
+    PlaylistInfo info = ud->playlist_info.data.playlist;
+
+    if(info.data.count == 0 || info.data.count == 1){
         return FALSE;
+    }
+
     if (g_strcmp0(ud->loop_status, LOOP_PLAYLIST) == 0)
         return TRUE;
-    return ud->playlist_pos < ud->playlist_count - 1;
+
+    return info.current_pos < info.data.count - 1;
 }
 
 static gboolean can_go_previous(UserData *ud)
 {
-    if (ud->playlist_pos < 0 || ud->playlist_count <= 0)
+    if (!ud->playlist_info.is_in_playlist)
         return FALSE;
-    if (ud->playlist_count == 1)
+
+    PlaylistInfo info = ud->playlist_info.data.playlist;
+
+    if(info.data.count == 0 || info.data.count == 1){
         return FALSE;
+    }
     if (g_strcmp0(ud->loop_status, LOOP_PLAYLIST) == 0)
         return TRUE;
-    return ud->playlist_pos > 0;
+
+    return info.current_pos > 0;
 }
 
 static GVariant * set_playback_status(UserData *ud)
@@ -1075,6 +1591,73 @@ static void on_bus_acquired(GDBusConnection *connection,
         }
     }
 
+    if (ud->track_list_interface_id == 0) {
+        ud->track_list_interface_id =
+            g_dbus_connection_register_object(connection, "/org/mpris/MediaPlayer2/TrackList",
+                                              ud->track_list_interface_info,
+                                              &vtable_track_list,
+                                              user_data, NULL, &error);
+        if (error != NULL) {
+            g_printerr("Failed to register track list interface: %s\n", error->message);
+            g_clear_error(&error);
+        }
+    }
+
+    if(ud->track_interface_ids.count == 0){
+        TrackInterfaceId no_track_id =
+                g_dbus_connection_register_object(connection, TRACK_ID_NO_TRACK_INTERFACE,
+                                                ud->track_data_interface_info,
+                                                &vtable_track_data,
+                                                user_data, NULL, &error);
+        if (error != NULL) {
+            g_printerr("Failed to register track data interface: %s\n", error->message);
+            g_clear_error(&error);
+        }
+
+        tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), no_track_id);
+
+        TrackInterfaceId current_track_id =
+                g_dbus_connection_register_object(connection, TRACK_ID_CURRENT_INTERFACE,
+                                                ud->track_data_interface_info,
+                                                &vtable_track_data,
+                                                user_data, NULL, &error);
+        if (error != NULL) {
+            g_printerr("Failed to register track data interface: %s\n", error->message);
+            g_clear_error(&error);
+        }
+
+        tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), current_track_id);
+
+
+        if(ud->playlist_info.is_in_playlist){
+            PlaylistInfo info = ud->playlist_info.data.playlist;
+
+            
+            for(size_t i = 0; i < info.data.count; ++i){
+                gchar *temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
+
+                TrackInterfaceId track_id_at_idx =
+                    g_dbus_connection_register_object(connection, temp_str,
+                    ud->track_data_interface_info,
+                    &vtable_track_data,
+                    user_data, NULL, &error);
+
+                g_free(temp_str);
+
+                if (error != NULL) {
+                    g_printerr("Failed to register track data interface: %s\n", error->message);
+                    g_clear_error(&error);
+                }
+
+                tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), track_id_at_idx);
+
+
+            }
+        }
+
+
+    }
+
     if (!ud->events_setup) {
         setup_mpv_event_sources(ud);
         ud->events_setup = TRUE;
@@ -1130,6 +1713,256 @@ static void on_name_lost(GDBusConnection *connection,
       ud->root_interface_id = 0;
       ud->player_interface_id = 0;
     }
+}
+
+static void update_playlist_pos(MaybePlaylistInfo *info, int64_t pos){
+    if(!info->is_in_playlist){
+        g_printerr("updating playlist pos without playlist, maybe the playlist status chnaged? Pos: %ld", pos);
+        return;
+    }
+
+    if(pos < 0){
+        g_printerr("playlist pos is negative (%ld), but should be 0 >=", pos);
+        return;
+    }
+
+    info->data.playlist.current_pos = pos;
+}
+
+static void free_tracker_interface_properties(TrackInterfaceProperties* properties){
+    g_free(properties->filename);
+    g_free(properties->title);
+    g_free(properties->path);
+}
+
+static void free_tracker_interface_properties_array(TrackInterfacePropertiesArray* array){
+    for(size_t i = 0; i < array->count;++i){
+        free_tracker_interface_properties(ARRAY_MUT_AT(array, i));
+    }
+
+    g_free(array->items);
+
+    array->items = NULL;
+    array->capacity = 0;
+    array->count = 0;
+}
+
+static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count){
+    mpv_node node;
+
+    int result = mpv_get_property(mpv, "playlist", MPV_FORMAT_NODE, &node);
+
+    if(result < 0){
+        g_printerr("ERROR: getting property playlist failed: %d", result);
+        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+    }
+
+    // see: https://mpv.io/manual/master/#command-interface-playlist
+    //When querying the property with the client API using MPV_FORMAT_NODE, or with Lua mp.get_property_native, this will return a mpv_node with the following contents:
+
+    // MPV_FORMAT_NODE_ARRAY
+    //     MPV_FORMAT_NODE_MAP (for each playlist entry)
+    //         "filename"      MPV_FORMAT_STRING
+    //         "current"       MPV_FORMAT_FLAG (might be missing)
+    //         "playing"       MPV_FORMAT_FLAG (same)
+    //         "title"         MPV_FORMAT_STRING (optional)
+    //         "id"            MPV_FORMAT_INT64
+    //         "playlist-path" MPV_FORMAT_STRING (optional)
+
+
+    if(node.format != MPV_FORMAT_NODE_ARRAY){
+        g_printerr("ERROR: invalid format for root node of 'playlist': %d", node.format);
+
+        mpv_free_node_contents(&node);
+        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+    }
+
+    struct mpv_node_list *node_array = node.u.list;
+
+    // why chose an int, if the docs also say, can't be negative, i love the usages of ints, just use int32_t if you REALLY need that data range
+    if(node_array->num < 0){
+        g_printerr("ERROR: invalid length of array in 'playlist': %d", node_array->num);
+
+        mpv_free_node_contents(&node);
+        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+    }
+
+    TrackInterfacePropertiesArray array = {.count = 0,.capacity = 0,.items = NULL};
+
+
+    for(size_t i = 0; i < (size_t)node_array->num; ++i){
+
+        mpv_node current_node = node_array->values[i];
+
+        if(current_node.format != MPV_FORMAT_NODE_MAP){
+            g_printerr("ERROR: invalid format for array[%zu] node of 'playlist': %d", i, current_node.format);
+
+            mpv_free_node_contents(&node);
+            free_tracker_interface_properties_array(&array);
+            return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+        }
+
+        struct mpv_node_list * node_map = current_node.u.list;
+
+        if(node_map->num < 0){
+            g_printerr("ERROR: invalid length of map in 'playlist': %d", node_map->num);
+
+            mpv_free_node_contents(&node);
+            free_tracker_interface_properties_array(&array);
+            return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+        }
+
+        TrackInterfaceProperties properties = {.filename = NULL, .title = NULL,.id = 0,.path = NULL};
+
+        for(size_t i = 0; i < (size_t)node_map->num; ++i){
+
+                mpv_node current_map_node = node_map->values[i];
+                char* current_map_key = node_map->keys[i];
+
+                if(g_strcmp0(current_map_key, "filename") == 0){
+                    if(current_map_node.format != MPV_FORMAT_STRING) {
+                        g_printerr("ERROR: invalid format for array[%zu].filename node of 'playlist': %d", i, current_map_node.format);
+
+                        mpv_free_node_contents(&node);
+                        free_tracker_interface_properties_array(&array);
+                        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+                    }
+
+                    properties.filename = g_strdup(current_map_node.u.string);
+                }else if(g_strcmp0(current_map_key, "current") == 0){
+                    //ignore
+                    continue;
+                }else if(g_strcmp0(current_map_key, "playing") == 0){
+                    //ignore
+                    continue;
+                }else if(g_strcmp0(current_map_key, "title") == 0){
+                    if(current_map_node.format != MPV_FORMAT_STRING) {
+                        g_printerr("ERROR: invalid format for array[%zu].title node of 'playlist': %d", i, current_map_node.format);
+
+                        mpv_free_node_contents(&node);
+                        free_tracker_interface_properties_array(&array);
+                        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+                    }
+
+                    properties.title = g_strdup(current_map_node.u.string);
+                }else if(g_strcmp0(current_map_key, "id") == 0){
+                    if(current_map_node.format != MPV_FORMAT_INT64) {
+                        g_printerr("ERROR: invalid format for array[%zu].id node of 'playlist': %d", i, current_map_node.format);
+
+                        mpv_free_node_contents(&node);
+                        free_tracker_interface_properties_array(&array);
+                        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+                    }
+
+                    properties.id = current_map_node.u.int64;
+                }else if(g_strcmp0(current_map_key, "playlist-path") == 0){
+                    if(current_map_node.format != MPV_FORMAT_STRING) {
+                        g_printerr("ERROR: invalid format for array[%zu].playlist-path node of 'playlist': %d", i, current_map_node.format);
+
+                        mpv_free_node_contents(&node);
+                        free_tracker_interface_properties_array(&array);
+                        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+                    }
+
+                    properties.path = g_strdup(current_map_node.u.string);
+                }else{
+                    g_printerr("ERROR: invalid key '%s' in map in 'playlist'", current_map_key);
+
+                    mpv_free_node_contents(&node);
+                    free_tracker_interface_properties_array(&array);
+                    return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+                }
+
+        }
+
+        tracker_interface_properties_array_append_unchecked(&array, properties);
+
+    }
+
+    if(array.count != count){
+        g_printerr("ERROR: count doesn't match node count in 'playlist': %zu != %zu", array.count, count);
+
+        mpv_free_node_contents(&node);
+        free_tracker_interface_properties_array(&array);
+        return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+    }
+
+    mpv_free_node_contents(&node);
+    
+    return (PlaylistInfo){.current_pos = pos,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
+}
+
+static TrackInterfaceProperties get_current_track_properties(mpv_handle* mpv){
+    TrackInterfaceProperties properties = {.filename = NULL, .title = NULL, .id = 0,.path = NULL};
+
+    char *path = mpv_get_property_string(mpv, "path");
+    if (path != NULL) {
+        properties.path = path;
+
+        gchar *basename = g_path_get_basename(path);;
+        if(basename != NULL){
+            properties.filename = basename;
+        }
+    }
+
+    char *title = mpv_get_property_string(mpv, "media-title");
+    if (title != NULL) {
+        properties.title = title;
+    }
+
+    return properties;
+}
+
+static MaybePlaylistInfo maybe_playlist_info_init(mpv_handle *mpv){
+    int64_t count = 0;
+    int64_t pos = 0;
+
+    mpv_get_property(mpv, "playlist-count", MPV_FORMAT_INT64, &count);
+    mpv_get_property(mpv, "playlist-pos", MPV_FORMAT_INT64, &pos);
+
+    if(pos < 0){
+        return (MaybePlaylistInfo){.is_in_playlist = FALSE, .data = {.single = get_current_track_properties(mpv) }};
+    }
+
+    if(count < 0){
+        g_printerr("Invalid playlist count: %ld", count);
+        return (MaybePlaylistInfo){.is_in_playlist = FALSE, .data = {.single = get_current_track_properties(mpv) }};
+    }
+
+    PlaylistInfo playlist = playlist_info_get(mpv, (size_t)pos,(size_t)count);
+
+    return (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist }};
+
+}
+
+static void update_playlist_data_by_new_count(mpv_handle *mpv, MaybePlaylistInfo *info, int64_t count){
+    //TODO: emit signals
+
+    if(!info->is_in_playlist){
+        g_printerr("Update of count not ot allowed in case of a playlist");
+        return;
+    }
+
+    PlaylistInfo* pl_info = &(info->data.playlist);
+
+    int64_t pos = 0;
+
+    mpv_get_property(mpv, "playlist-pos", MPV_FORMAT_INT64, &pos);
+
+    if(pos < 0){
+        g_printerr("Invalid playlist size: %ld, not allowed in case of a playlist", pos);
+        return;
+    }
+
+    if(count < 0){
+        g_printerr("Invalid playlist count: %ld", count);
+        return;
+    }
+
+    
+    free_tracker_interface_properties_array(&(pl_info->data));
+    PlaylistInfo playlist = playlist_info_get(mpv, (size_t)pos,(size_t)count);
+    *info = (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist } };
 }
 
 static void handle_property_change(const char *name, void *data, UserData *ud)
@@ -1216,12 +2049,14 @@ static void handle_property_change(const char *name, void *data, UserData *ud)
         prop_name = "Fullscreen";
         prop_value = g_variant_new_boolean(*status);
 
-    } else if (g_strcmp0(name, "playlist-count") == 0) {
-      ud->playlist_count = *(int64_t *)data;
+    } else if (g_strcmp0(name, "playlist-count") == 0 || g_strcmp0(name, "playlist/count") == 0) {
+      const int64_t playlist_count = *(int64_t *)data;
+      update_playlist_data_by_new_count(ud->mpv, &ud->playlist_info, playlist_count);
       update_can_go_next_prev = TRUE;
 
     } else if (g_strcmp0(name, "playlist-pos") == 0) {
-      ud->playlist_pos = *(int64_t *)data;
+      const int64_t playlist_pos = *(int64_t *)data;
+      update_playlist_pos(&ud->playlist_info, playlist_pos);
       update_can_go_next_prev = TRUE;
     }
 
@@ -1327,7 +2162,7 @@ typedef struct {
     gboolean needs_ext;
 } TinyMediaManagerNameFormat;
 
-gchar* format_format_filename_tiny_media_manager(TinyMediaManagerNameFormat format, gchar* dirname, gchar* basename, gchar * ext){
+static gchar* format_format_filename_tiny_media_manager(TinyMediaManagerNameFormat format, gchar* dirname, gchar* basename, gchar * ext){
     if(format.needs_name){
         if(format.needs_ext){
             return g_strdup_printf(format.fmt, dirname, basename, ext);
@@ -1358,12 +2193,10 @@ static gchar* get_basename_without_ext(char* path){
     return basename;
 }
 
-static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, char *path, TinyMediaManagerState* state){
+static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, char *path, G_GNUC_UNUSED TinyMediaManagerState* state){
     gchar *out = NULL;
     gchar *dirname = g_path_get_dirname(path);
     gchar *basename = get_basename_without_ext(path);
-
-    (void)state;
 
     char *exts_str = mpv_get_property_string(mpv, "image-exts");
     if (!exts_str) {
@@ -1401,7 +2234,7 @@ static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, char *path, TinyMe
         (TinyMediaManagerNameFormat){.fmt = "%s/cover.%s",.needs_name = FALSE, .needs_ext = TRUE},
     };
 
-    for (size_t i=0;i < sizeof(formatters)/sizeof((*formatters));++i) {
+    for (size_t i = 0;i < sizeof(formatters)/sizeof((*formatters));++i) {
         const TinyMediaManagerNameFormat formatter = formatters[i];
         for (gchar **ext = exts; *ext; ++ext) {
 
@@ -1427,9 +2260,8 @@ done:
     return out;
 }
 
-void free_state_tiny_media_manager(TinyMediaManagerState* state){
+static void free_state_tiny_media_manager(G_GNUC_UNUSED TinyMediaManagerState* state){
    //nothing to do
-   (void)state;
 }
 
 static DynamicArtHandlerArray get_dynamic_art_handlers(void){
@@ -1446,7 +2278,7 @@ static DynamicArtHandlerArray get_dynamic_art_handlers(void){
             .free_state = (void(*)(void* state))free_state_tiny_media_manager,
         };
 
-        dynamic_art_handlers_append_unchecked(&array,tiny_media_info_thumb_handler);
+        dynamic_art_handler_array_append_unchecked(&array,tiny_media_info_thumb_handler);
 
     }
 
@@ -1459,16 +2291,44 @@ static void free_art_handler(DynamicArtHandler* handler){
     handler->state = NULL;
 }
 
-static void free_art_handlers(DynamicArtHandlerArray* handlers){
-    for(size_t i =0; i < handlers->count;++i){
-        free_art_handler(&(handlers->items[i]));
+static void free_art_handler_array(DynamicArtHandlerArray* array){
+    for(size_t i = 0; i < array->count;++i){
+        free_art_handler(ARRAY_MUT_AT(array,i));
     }
 
-    g_free(handlers->items);
+    g_free(array->items);
 
-    handlers->items = NULL;
-    handlers->capacity = 0;
-    handlers->count = 0;
+    array->items = NULL;
+    array->capacity = 0;
+    array->count = 0;
+}
+
+static void free_maybe_playlist_info(MaybePlaylistInfo* info){
+    if(info->is_in_playlist){
+        PlaylistInfo* pl_info = &(info->data.playlist);
+        free_tracker_interface_properties_array(&(pl_info->data));
+        pl_info->current_pos = 0;
+    }else{
+        free_tracker_interface_properties(&(info->data.single));
+    }
+
+    *info = (MaybePlaylistInfo){.is_in_playlist = FALSE , .data = {.single = {.filename = NULL, .title = NULL,.id = 0,.path = NULL}}};
+}
+
+static void free_track_interface_id(GDBusConnection *connection, TrackInterfaceId interface){
+    g_dbus_connection_unregister_object(connection, interface);
+}
+
+static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array){
+    for(size_t i = 0; i < array->count;++i){
+        free_track_interface_id(connection, array->items[i]);
+    }
+
+    g_free(array->items);
+
+    array->items = NULL;
+    array->capacity = 0;
+    array->count = 0;
 }
 
 // Plugin entry point
@@ -1493,6 +2353,11 @@ int mpv_open_cplugin(mpv_handle *mpv)
         g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2");
     ud.player_interface_info =
         g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2.Player");
+    ud.track_list_interface_info =
+        g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2.TrackList");
+    ud.track_data_interface_info =
+        g_dbus_node_info_lookup_interface(introspection_data, "mpv.mpris.TrackData");
+
 
     ud.mpv = mpv;
     ud.loop = loop;
@@ -1505,9 +2370,9 @@ int mpv_open_cplugin(mpv_handle *mpv)
     ud.paused = FALSE;
     ud.shuffle = FALSE;
     ud.dynamic_art_handlers = get_dynamic_art_handlers();
+    ud.track_interface_ids = (TrackInterfaceIdArray){.capacity = 0,.count = 0, .items=NULL};
     ud.client_name = mpv_get_property_string(mpv, "audio-client-name");
-    mpv_get_property(mpv, "playlist-count", MPV_FORMAT_INT64, &ud.playlist_count);
-    mpv_get_property(mpv, "playlist-pos", MPV_FORMAT_INT64, &ud.playlist_pos);
+    ud.playlist_info = maybe_playlist_info_init(mpv);
 
     char *bus_name = build_bus_name(ud.client_name, FALSE);
     g_main_context_push_thread_default(ctx);
@@ -1539,13 +2404,17 @@ int mpv_open_cplugin(mpv_handle *mpv)
 
     g_dbus_connection_unregister_object(ud.connection, ud.root_interface_id);
     g_dbus_connection_unregister_object(ud.connection, ud.player_interface_id);
+    g_dbus_connection_unregister_object(ud.connection, ud.track_list_interface_id);
+
+    free_track_interface_id_array(ud.connection, &ud.track_interface_ids);
 
     g_bus_unown_name(ud.bus_id);
     g_main_loop_unref(loop);
     g_main_context_unref(ctx);
     g_dbus_node_info_unref(introspection_data);
     mpv_free(ud.client_name);
-    free_art_handlers(&(ud.dynamic_art_handlers));
+    free_art_handler_array(&(ud.dynamic_art_handlers));
+    free_maybe_playlist_info(&(ud.playlist_info));
 
     return 0;
 }

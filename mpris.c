@@ -600,11 +600,13 @@ static gboolean metadata_set_default_int(GVariantDict *dict,
 
 #define TRACK_ID_NO_TRACK_INTERFACE "/org/mpris/MediaPlayer2/TrackList/NoTrack"
 
-#define TRACK_ID_MANAGER "/io/mpv/MPRIS/TrackList"
+#define TRACK_ID_PREFFIX "/io/mpv/MPRIS/TrackList"
 
-#define TRACK_ID_CURRENT_INTERFACE TRACK_ID_MANAGER "/Current"
+#define TRACK_ID_CURRENT_INTERFACE TRACK_ID_PREFFIX "/Current"
 
-#define TRACK_ID_INTERFACE_ROOT TRACK_ID_MANAGER "/ByNumber/"
+#define TRACK_ID_MANAGER TRACK_ID_PREFFIX "/ByNumber"
+
+#define TRACK_ID_INTERFACE_ROOT TRACK_ID_MANAGER "/"
 
 #define TRACK_ID_INTERFACE_FMT  TRACK_ID_INTERFACE_ROOT "%" PRIu64
 
@@ -1573,14 +1575,17 @@ static void set_stopped_status(UserData *ud)
   emit_property_changes(ud);
 }
 
-static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager,gchar* name){
+static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager,gchar* name, TrackInterfaceProperties properties){
     GDBusObjectSkeleton *object = g_dbus_object_skeleton_new(name);
 
     DBUSIoMpvMprisTrackData *iface;
     iface = dbus_io_mpv_mpris_track_data_skeleton_new();
 
-    //TODO:
-    // my_device_set_name(iface, id);
+    dbus_io_mpv_mpris_track_data_set_filename(iface,properties.filename);
+    dbus_io_mpv_mpris_track_data_set_id(iface,properties.id);
+    dbus_io_mpv_mpris_track_data_set_object_path(iface,name);
+    dbus_io_mpv_mpris_track_data_set_path(iface,properties.path);
+    dbus_io_mpv_mpris_track_data_set_title(iface,properties.title);
 
     g_dbus_object_skeleton_add_interface(
         object,
@@ -1614,7 +1619,7 @@ static void setup_track_interface_ids(UserData *ud, TrackList* track_list){
         track_list->no_track_id =  no_track_id;
     }
 
-    if(track_list->no_track_id == 0){
+    if(track_list->current_track_id == 0){
         guint current_track_id =
                 g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
                                                 ud->track_data_interface_info,
@@ -1640,7 +1645,7 @@ static void setup_track_interface_ids(UserData *ud, TrackList* track_list){
             for(size_t i = 0; i < info.data.count; ++i){
                 gchar *interface_name = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
 
-                TrackInterface  interface = add_tracker_interface(track_list->manager, interface_name);
+                TrackInterface interface = add_tracker_interface(track_list->manager, interface_name, info.data.items[i]);
 
                 tracker_interface_array_append_unchecked(&(track_list->track_interfaces), interface);
 

@@ -5,8 +5,9 @@
 #include <inttypes.h>
 #include <string.h>
 
+#include "./dbus/track-data.h"
 
-static const char *introspection_xml =
+static const char *root_introspection_xml =
     "<node>\n"
     "  <interface name=\"org.mpris.MediaPlayer2\">\n"
     "    <method name=\"Raise\">\n"
@@ -99,14 +100,11 @@ static const char *introspection_xml =
     "      <arg type=\"a{sv}\" />\n"
     "    </signal>\n"
     "  </interface>\n"
-    "  <interface name=\"io.mpv.mpris.TrackData\">\n"
-    "    <property name=\"Filename\" type=\"s\" access=\"read\" />\n"
-    "    <property name=\"Title\" type=\"s\" access=\"read\" />\n"
-    "    <property name=\"Id\" type=\"x\" access=\"read\" />\n"
-    "    <property name=\"Path\" type=\"s\" access=\"read\" />\n"
-    "    <property name=\"ObjectPath\" type=\"o\" access=\"read\" />\n"
-    "  </interface>\n"
     "</node>\n";
+
+#include "dbus/track-data-introspection.h"
+
+static const char *tracker_data_introspection_xml = IO_MPV_MPRIS_TRACKDATA;
 
 typedef struct {
     const char* name;
@@ -145,21 +143,20 @@ static void dynamic_art_handler_array_append_unchecked(DynamicArtHandlerArray* a
 
 typedef struct {
     char* interface_name;
-    guint id;
-} TrackInterfaceId;
+} TrackInterface;
 
 typedef struct {
-    TrackInterfaceId* items;
+    TrackInterface* items;
     size_t count;
     size_t capacity;
-} TrackInterfaceIdArray;
+} TrackInterfaceArray;
 
 
-static void tracker_interface_id_array_append_unchecked(TrackInterfaceIdArray* array, TrackInterfaceId item){
+static void tracker_interface_array_append_unchecked(TrackInterfaceArray* array, TrackInterface item){
     if(array->capacity <= array->count){
         array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW(array->capacity);
     
-        array->items = g_realloc(array->items,sizeof(TrackInterfaceId) * array->capacity);
+        array->items = g_realloc(array->items,sizeof(TrackInterface) * array->capacity);
     }
 
     array->items[array->count] = item;
@@ -209,7 +206,8 @@ typedef struct {
     guint interface_id;
     guint no_track_id;
     guint current_track_id;
-    TrackInterfaceIdArray track_interface_ids;
+    TrackInterfaceArray track_interfaces;
+    GDBusObjectManagerServer* manager;
 } TrackList;
 
 typedef struct UserData
@@ -639,9 +637,11 @@ static gboolean metadata_set_default_int(GVariantDict *dict,
 
 #define TRACK_ID_NO_TRACK_INTERFACE "/org/mpris/MediaPlayer2/TrackList/NoTrack"
 
-#define TRACK_ID_CURRENT_INTERFACE "/io/mpv/MPRIS/TrackList/Current"
+#define TRACK_ID_MANAGER "/io/mpv/MPRIS/TrackList"
 
-#define TRACK_ID_INTERFACE_ROOT "/io/mpv/MPRIS/TrackList/ByNumber/"
+#define TRACK_ID_CURRENT_INTERFACE TRACK_ID_MANAGER "/Current"
+
+#define TRACK_ID_INTERFACE_ROOT TRACK_ID_MANAGER "/ByNumber/"
 
 #define TRACK_ID_INTERFACE_FMT  TRACK_ID_INTERFACE_ROOT "%" PRIu64
 
@@ -890,7 +890,7 @@ static GVariant *get_property_root(G_GNUC_UNUSED GDBusConnection *connection,
         ret = g_variant_new_boolean(FALSE);
 
     } else if (g_strcmp0(property_name, "HasTrackList") == 0) {
-        ret = g_variant_new_boolean(FALSE);
+        ret = g_variant_new_boolean(TRUE);
 
     } else if (g_strcmp0(property_name, "Identity") == 0) {
         char *client_name = mpv_get_property_string(ud->mpv, "audio-client-name");
@@ -1616,10 +1616,33 @@ static void set_stopped_status(UserData *ud)
   emit_property_changes(ud);
 }
 
-static void setup_track_interface_ids(UserData *ud){
+static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager,gchar* name){
+    GDBusObjectSkeleton *object = g_dbus_object_skeleton_new(name);
+
+    DBUSIoMpvMprisTrackData *iface;
+    iface = dbus_io_mpv_mpris_track_data_skeleton_new();
+
+    //TODO:
+    // my_device_set_name(iface, id);
+
+    g_dbus_object_skeleton_add_interface(
+        object,
+        G_DBUS_INTERFACE_SKELETON(iface));
+
+    g_dbus_object_manager_server_export(
+        manager,
+        object);
+
+    g_object_unref(iface);
+    g_object_unref(object);
+
+    return (TrackInterface){.interface_name = name};
+}
+
+static void setup_track_interface_ids(UserData *ud, TrackList* track_list){
     GError *error = NULL;
 
-    if(ud->track_list.no_track_id == 0){
+    if(track_list->no_track_id == 0){
         guint no_track_id =
                     g_dbus_connection_register_object(ud->connection, TRACK_ID_NO_TRACK_INTERFACE,
                                                     ud->track_data_interface_info,
@@ -1631,10 +1654,10 @@ static void setup_track_interface_ids(UserData *ud){
         }
             fprintf(stderr, "ref_count: %u\n",ud->track_data_interface_info->ref_count);
 
-        ud->track_list.no_track_id =  no_track_id;
+        track_list->no_track_id =  no_track_id;
     }
 
-    if(ud->track_list.no_track_id == 0){
+    if(track_list->no_track_id == 0){
         guint current_track_id =
                 g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
                                                 ud->track_data_interface_info,
@@ -1645,34 +1668,51 @@ static void setup_track_interface_ids(UserData *ud){
             g_clear_error(&error);
         }
 
-        ud->track_list.current_track_id =  current_track_id;
+        track_list->current_track_id =  current_track_id;
     }
 
-    if(ud->track_list.track_interface_ids.count == 0){
+    if(track_list->track_interfaces.count == 0){
+        
         if(ud->playlist_info.is_in_playlist){
-            PlaylistInfo info = ud->playlist_info.data.playlist;
+            if(track_list->manager == NULL){
+                g_printerr("track list manager is NULL\n");
+            }
 
+            PlaylistInfo info = ud->playlist_info.data.playlist;
             
             for(size_t i = 0; i < info.data.count; ++i){
                 gchar *interface_name = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
 
-                guint track_id_at_idx =
-                    g_dbus_connection_register_object(ud->connection, interface_name,
-                    ud->track_data_interface_info,
-                    &vtable_track_data,
-                    ud, NULL, &error);
+                TrackInterface  interface = add_tracker_interface(track_list->manager, interface_name);
 
-                if (error != NULL) {
-                    g_printerr("Failed to register track data interface: %s\n", error->message);
-                    g_clear_error(&error);
-                }
-
-                tracker_interface_id_array_append_unchecked(&(ud->track_list.track_interface_ids), (TrackInterfaceId){.id = track_id_at_idx, .interface_name = interface_name});
+                tracker_interface_array_append_unchecked(&(track_list->track_interfaces), interface);
 
 
             }
         }
     }
+}
+
+static void setup_track_list(UserData *ud, TrackList* track_list){
+    GError *error = NULL;
+
+    if (track_list->interface_id == 0) {
+        track_list->interface_id =
+            g_dbus_connection_register_object(ud->connection, "/org/mpris/MediaPlayer2",
+                                              ud->track_list_interface_info,
+                                              &vtable_track_list,
+                                              ud, NULL, &error);
+        if (error != NULL) {
+            g_printerr("Failed to register track list interface: %s\n", error->message);
+            g_clear_error(&error);
+        }
+    }
+    
+    track_list->manager = g_dbus_object_manager_server_new(TRACK_ID_MANAGER);
+    g_dbus_object_manager_server_set_connection(track_list->manager , ud->connection);
+
+    setup_track_interface_ids(ud, track_list);
+
 }
 
 // Register D-Bus object and interfaces, then set up mpv event handlers
@@ -1708,19 +1748,7 @@ static void on_bus_acquired(GDBusConnection *connection,
         }
     }
 
-    if (ud->track_list.interface_id == 0) {
-        ud->track_list.interface_id =
-            g_dbus_connection_register_object(connection, "/org/mpris/MediaPlayer2",
-                                              ud->track_list_interface_info,
-                                              &vtable_track_list,
-                                              user_data, NULL, &error);
-        if (error != NULL) {
-            g_printerr("Failed to register track list interface: %s\n", error->message);
-            g_clear_error(&error);
-        }
-    }
-
-    setup_track_interface_ids(ud);
+    setup_track_list(ud, &(ud->track_list));
 
     if (!ud->events_setup) {
         ud->events_setup = setup_mpv_event_sources(ud);
@@ -1812,7 +1840,29 @@ static void on_name_acquired(G_GNUC_UNUSED GDBusConnection *connection,
    //do nothing
 }
 
-static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array);
+static void free_track_interface_id_array(UserData *ud, TrackInterfaceArray* array);
+
+static void clear_track_list(UserData *ud, TrackList* track_list){
+    free_track_interface_id_array(ud, &(track_list->track_interfaces));
+
+    track_list->interface_id = 0;
+    track_list->no_track_id = 0;
+    track_list->current_track_id = 0;
+
+    track_list->manager = NULL;
+}
+
+static void free_track_list(UserData *ud, TrackList* track_list){
+    g_dbus_connection_unregister_object(ud->connection, track_list->interface_id);
+    g_dbus_connection_unregister_object(ud->connection, track_list->no_track_id);
+    g_dbus_connection_unregister_object(ud->connection, track_list->current_track_id);
+
+    free_track_interface_id_array(ud, &(track_list->track_interfaces));
+
+    g_object_unref(track_list->manager);
+
+    clear_track_list(ud, track_list);
+}
 
 static void on_name_lost(GDBusConnection *connection,
                          G_GNUC_UNUSED const char *_name,
@@ -1843,11 +1893,7 @@ static void on_name_lost(GDBusConnection *connection,
         ud->root_interface_id = 0;
         ud->player_interface_id = 0;
 
-        free_track_interface_id_array(ud->connection, &(ud->track_list.track_interface_ids));
-        
-        ud->track_list.interface_id = 0;
-        ud->track_list.no_track_id = 0;
-        ud->track_list.current_track_id = 0;
+        clear_track_list(ud, &(ud->track_list));
 
     }
 }
@@ -2097,7 +2143,7 @@ static void update_playlist_count(UserData *ud, int64_t count){
 }
 
 static void free_maybe_playlist_info(MaybePlaylistInfo* info);
-static void setup_track_interface_ids(UserData *ud);
+static void setup_track_interface_ids(UserData *ud, TrackList* track_list);
 
 static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     //TODO: emit signals
@@ -2122,8 +2168,8 @@ static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     PlaylistInfo playlist = playlist_info_get(ud->mpv, (size_t)pos,(size_t)count);
     ud->playlist_info = (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist } };
     
-    free_track_interface_id_array(ud->connection, &(ud->track_list.track_interface_ids));
-    setup_track_interface_ids(ud);
+    free_track_interface_id_array(ud, &(ud->track_list.track_interfaces));
+    setup_track_interface_ids(ud, &(ud->track_list));
 
 }
 
@@ -2487,9 +2533,9 @@ static void free_maybe_playlist_info(MaybePlaylistInfo* info){
     *info = (MaybePlaylistInfo){.is_in_playlist = FALSE , .data = {.single = {.filename = NULL, .title = NULL,.id = 0,.path = NULL}}};
 }
 
-static void free_track_interface_id(GDBusConnection *connection, TrackInterfaceId* interface){
-    fprintf(stderr,"free interface id: %u\n", interface->id);
-    gboolean res = g_dbus_connection_unregister_object(connection, interface->id);
+static void free_track_interface_id(UserData *ud, TrackInterface* interface){
+    fprintf(stderr,"free interface id: %s\n", interface->interface_name);
+    gboolean res = g_dbus_object_manager_server_unexport(ud->track_list.manager, interface->interface_name);
 
     fprintf(stderr, "g_dbus_connection_unregister_object: %d\n", res);
 
@@ -2497,9 +2543,9 @@ static void free_track_interface_id(GDBusConnection *connection, TrackInterfaceI
     interface->interface_name = NULL;
 }
 
-static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array){
+static void free_track_interface_id_array(UserData *ud, TrackInterfaceArray* array){
     for(size_t i = 0; i < array->count;++i){
-        free_track_interface_id(connection, &(array->items[i]));
+        free_track_interface_id(ud, &(array->items[i]));
     }
 
     g_free(array->items);
@@ -2509,6 +2555,16 @@ static void free_track_interface_id_array(GDBusConnection *connection, TrackInte
     array->count = 0;
 }
 
+static TrackList track_list_empty(void){
+    return (TrackList){
+        .current_track_id = 0,
+        .no_track_id = 0,
+        .interface_id = 0,
+        .manager = NULL,
+        .track_interfaces = (TrackInterfaceArray){ .capacity = 0, .count = 0, .items = NULL }
+    };
+}
+
 // Plugin entry point
 int mpv_open_cplugin(mpv_handle *mpv)
 {
@@ -2516,25 +2572,34 @@ int mpv_open_cplugin(mpv_handle *mpv)
     GMainLoop *loop;
     UserData ud = {.wakeup_pipe = {-1, -1}};
     GError *error = NULL;
-    GDBusNodeInfo *introspection_data = NULL;
+    GDBusNodeInfo *root_introspection_data = NULL;
+    GDBusNodeInfo *tracker_data_introspection_data = NULL;
 
     ctx = g_main_context_new();
     loop = g_main_loop_new(ctx, FALSE);
 
     // Load introspection data and split into separate interfaces
-    introspection_data = g_dbus_node_info_new_for_xml(introspection_xml, &error);
+    root_introspection_data = g_dbus_node_info_new_for_xml(root_introspection_xml, &error);
     if (error != NULL) {
         g_printerr("%s\n", error->message);
         g_clear_error(&error);
     }
-    ud.root_interface_info =
-        g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2");
-    ud.player_interface_info =
-        g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2.Player");
-    ud.track_list_interface_info =
-        g_dbus_node_info_lookup_interface(introspection_data, "org.mpris.MediaPlayer2.TrackList");
+
+    tracker_data_introspection_data = g_dbus_node_info_new_for_xml(tracker_data_introspection_xml, &error);
+    if (error != NULL) {
+        g_printerr("%s\n", error->message);
+        g_clear_error(&error);
+    }
+
     ud.track_data_interface_info =
-        g_dbus_node_info_lookup_interface(introspection_data, "io.mpv.mpris.TrackData");
+        g_dbus_node_info_lookup_interface(tracker_data_introspection_data, "io.mpv.mpris.TrackData");
+
+    ud.root_interface_info =
+        g_dbus_node_info_lookup_interface(root_introspection_data, "org.mpris.MediaPlayer2");
+    ud.player_interface_info =
+        g_dbus_node_info_lookup_interface(root_introspection_data, "org.mpris.MediaPlayer2.Player");
+    ud.track_list_interface_info =
+        g_dbus_node_info_lookup_interface(root_introspection_data, "org.mpris.MediaPlayer2.TrackList");
 
     ud.mpv = mpv;
     ud.loop = loop;
@@ -2552,7 +2617,7 @@ int mpv_open_cplugin(mpv_handle *mpv)
     ud.client_name = g_strdup(client_name);
     mpv_free(client_name);
     ud.dynamic_art_handlers = get_dynamic_art_handlers();
-    ud.track_list = (TrackList){.current_track_id = 0, .no_track_id = 0, .interface_id = 0, .track_interface_ids = (TrackInterfaceIdArray){ .capacity = 0, .count = 0, .items = NULL }};
+    ud.track_list = track_list_empty();
     ud.client_name = mpv_get_property_string(mpv, "audio-client-name");
     ud.playlist_info = maybe_playlist_info_init(mpv);
 
@@ -2612,9 +2677,8 @@ int mpv_open_cplugin(mpv_handle *mpv)
     }
     g_dbus_connection_unregister_object(ud.connection, ud.root_interface_id);
     g_dbus_connection_unregister_object(ud.connection, ud.player_interface_id);
-    g_dbus_connection_unregister_object(ud.connection, ud.track_list.interface_id);
-
-    free_track_interface_id_array(ud.connection, &ud.track_list.track_interface_ids);
+        
+    free_track_list(&ud, &ud.track_list);
 
     if (ud.connection) {
         g_dbus_connection_unregister_object(ud.connection, ud.root_interface_id);
@@ -2638,11 +2702,12 @@ int mpv_open_cplugin(mpv_handle *mpv)
     g_main_context_pop_thread_default(ctx);
     g_main_loop_unref(loop);
     g_main_context_unref(ctx);
-    g_dbus_node_info_unref(introspection_data);
 
     g_free(ud.client_name);
     g_free(ud.cached_path);
     g_free(ud.cached_art_url);
+    g_dbus_node_info_unref(root_introspection_data);
+    g_dbus_node_info_unref(tracker_data_introspection_data);
     free_art_handler_array(&(ud.dynamic_art_handlers));
     free_maybe_playlist_info(&(ud.playlist_info));
 

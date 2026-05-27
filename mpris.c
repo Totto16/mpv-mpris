@@ -104,7 +104,7 @@ static const char *introspection_xml =
     "    <property name=\"Title\" type=\"s\" access=\"read\" />\n"
     "    <property name=\"Id\" type=\"x\" access=\"read\" />\n"
     "    <property name=\"Path\" type=\"s\" access=\"read\" />\n"
-    "    <property name=\"ObjectPath\" type=\"s\" access=\"read\" />\n"
+    "    <property name=\"ObjectPath\" type=\"o\" access=\"read\" />\n"
     "  </interface>\n"
     "</node>\n";
 
@@ -126,7 +126,7 @@ typedef struct {
 #define START_ARRAY_CAP (8)
 #define ARRAY_CAP_GROW(cap) ((cap)*2)
 
-#define ARRAY_ASSERT_IDX_IN_BOUNDS(arr, idx) ((((arr).count) >= (idx)) ? g_printerr("Array access out of bounds: size is %zu, idx was %zu\n", (arr).count, idx) : (void)NULL)
+#define ARRAY_ASSERT_IDX_IN_BOUNDS(arr, idx) ((((arr).count) <= (idx)) ? g_printerr("Array access out of bounds: size is %zu, idx was %zu\n", (arr).count, idx) : (void)NULL)
 
 #define ARRAY_AT(arr, idx) (arr).items[ARRAY_ASSERT_IDX_IN_BOUNDS((arr), (idx)), idx]
 #define ARRAY_MUT_AT(arr, idx) &((arr)->items[ARRAY_ASSERT_IDX_IN_BOUNDS((*(arr)), (idx)), idx])
@@ -142,7 +142,11 @@ static void dynamic_art_handler_array_append_unchecked(DynamicArtHandlerArray* a
     array->count++;
 }
 
-typedef guint TrackInterfaceId;
+
+typedef struct {
+    char* interface_name;
+    guint id;
+} TrackInterfaceId;
 
 typedef struct {
     TrackInterfaceId* items;
@@ -1358,6 +1362,8 @@ static void method_call_track_data(G_GNUC_UNUSED GDBusConnection *connection,
                                GDBusMethodInvocation *invocation,
                                G_GNUC_UNUSED gpointer user_data)
 {
+    fprintf(stderr,"method_call_track_data: %s %s %s\n", sender, _object_path, interface_name);
+
     g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
                                             G_DBUS_ERROR_UNKNOWN_METHOD,
                                             "Unknown method");
@@ -1444,7 +1450,7 @@ static GVariant *get_property_track_data(G_GNUC_UNUSED GDBusConnection *connecti
             ret = g_variant_new_string(properties.path);
         }
     } else if (g_strcmp0(property_name, "ObjectPath") == 0) {
-        ret = g_variant_new_string(object_path);
+        ret = g_variant_new_object_path(object_path);
     } else {
         ret = NULL;
         g_set_error(error, G_DBUS_ERROR,
@@ -1463,7 +1469,8 @@ static gboolean set_property_track_data(G_GNUC_UNUSED GDBusConnection *connectio
                                     G_GNUC_UNUSED GVariant *value,
                                     G_GNUC_UNUSED GError **error,
                                     G_GNUC_UNUSED gpointer user_data)
-{
+{   
+    fprintf(stderr,"set_property_track_data: %s %s %s %s\n", sender, object_path, interface_name, property_name);
     g_set_error(error, G_DBUS_ERROR,
                 G_DBUS_ERROR_UNKNOWN_PROPERTY,
                 "Cannot set property %s", property_name);
@@ -1607,7 +1614,7 @@ static void set_stopped_status(UserData *ud)
 static void setup_track_interface_ids(UserData *ud){
     GError *error = NULL;
 
-    TrackInterfaceId no_track_id =
+    guint no_track_id =
                 g_dbus_connection_register_object(ud->connection, TRACK_ID_NO_TRACK_INTERFACE,
                                                 ud->track_data_interface_info,
                                                 &vtable_track_data,
@@ -1617,9 +1624,9 @@ static void setup_track_interface_ids(UserData *ud){
         g_clear_error(&error);
     }
 
-    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), no_track_id);
+    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), (TrackInterfaceId){.id = no_track_id, .interface_name = NULL});
 
-    TrackInterfaceId current_track_id =
+    guint current_track_id =
             g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
                                             ud->track_data_interface_info,
                                             &vtable_track_data,
@@ -1629,7 +1636,7 @@ static void setup_track_interface_ids(UserData *ud){
         g_clear_error(&error);
     }
 
-    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), current_track_id);
+    tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), (TrackInterfaceId){.id = current_track_id, .interface_name = NULL});
 
 
     if(ud->playlist_info.is_in_playlist){
@@ -1637,22 +1644,20 @@ static void setup_track_interface_ids(UserData *ud){
 
         
         for(size_t i = 0; i < info.data.count; ++i){
-            gchar *temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
+            gchar *interface_name = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
 
-            TrackInterfaceId track_id_at_idx =
-                g_dbus_connection_register_object(ud->connection, temp_str,
+            guint track_id_at_idx =
+                g_dbus_connection_register_object(ud->connection, interface_name,
                 ud->track_data_interface_info,
                 &vtable_track_data,
                 ud, NULL, &error);
-
-            g_free(temp_str);
 
             if (error != NULL) {
                 g_printerr("Failed to register track data interface: %s\n", error->message);
                 g_clear_error(&error);
             }
 
-            tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), track_id_at_idx);
+            tracker_interface_id_array_append_unchecked(&(ud->track_interface_ids), (TrackInterfaceId){.id = track_id_at_idx, .interface_name = interface_name});
 
 
         }
@@ -2459,13 +2464,15 @@ static void free_maybe_playlist_info(MaybePlaylistInfo* info){
     *info = (MaybePlaylistInfo){.is_in_playlist = FALSE , .data = {.single = {.filename = NULL, .title = NULL,.id = 0,.path = NULL}}};
 }
 
-static void free_track_interface_id(GDBusConnection *connection, TrackInterfaceId interface){
-    g_dbus_connection_unregister_object(connection, interface);
+static void free_track_interface_id(GDBusConnection *connection, TrackInterfaceId* interface){
+    g_dbus_connection_unregister_object(connection, interface->id);
+    g_free(interface->interface_name);
+    interface->interface_name = NULL;
 }
 
 static void free_track_interface_id_array(GDBusConnection *connection, TrackInterfaceIdArray* array){
     for(size_t i = 0; i < array->count;++i){
-        free_track_interface_id(connection, array->items[i]);
+        free_track_interface_id(connection, &(array->items[i]));
     }
 
     g_free(array->items);

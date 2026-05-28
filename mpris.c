@@ -295,7 +295,7 @@ static gchar *path_to_uri(mpv_handle *mpv, char *path)
     return uri;
 }
 
-static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, char *path)
+static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, gchar *path)
 {
     char *uri;
     uri = g_uri_parse_scheme(path);
@@ -308,7 +308,7 @@ static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, char *
         g_free(converted);
     }
 
-    mpv_free(path);
+    g_free(path);
 }
 
 static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
@@ -318,7 +318,8 @@ static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
         return;
     }
 
-    add_metadata_uri_by_path(mpv, dict, path);
+    add_metadata_uri_by_path(mpv, dict, g_strdup(path));
+    mpv_free(path);
 }
 
 static gchar* try_get_cover_art_file(mpv_handle *mpv)
@@ -481,16 +482,16 @@ static char *cached_path = NULL;
 // cached last artwork url, owned by glib
 static gchar *cached_art_url = NULL;
 
-static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict, char* path)
+static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict, gchar* path)
 {
     // mpv may call create_metadata multiple times, so cache to save CPU
     if (!cached_path || strcmp(path, cached_path)) {
-        mpv_free(cached_path);
+        g_free(cached_path);
         g_free(cached_art_url);
         cached_path = path;
         cached_art_url = get_art_url(mpv, dynamic_art_handlers, path);
     } else {
-        mpv_free(path);
+        g_free(path);
     }
 
     if (cached_art_url) {
@@ -505,7 +506,8 @@ static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art
         return;
     }
 
-    add_metadata_art_by_path(mpv, dynamic_art_handlers, dict, path);
+    add_metadata_art_by_path(mpv, dynamic_art_handlers, dict, g_strdup(path));
+    mpv_free(path);
 }
 
 static void add_metadata_content_created(mpv_handle *mpv, GVariantDict *dict)
@@ -723,12 +725,8 @@ static GVariant *create_metadata_for_track(UserData *ud, TrackInterfacePropertie
     //TODO: if possible, how to unify "create_metadata" and "create_metadata_for_track"
 
     GVariantDict dict;
-    gchar *temp_str;
 
     g_variant_dict_init(&dict, NULL);
-
-    temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, track_idx);
-    g_free(temp_str);
 
     { // set album, if none is set
 
@@ -1195,22 +1193,21 @@ static void method_call_track_list(G_GNUC_UNUSED GDBusConnection *connection,
 
             PlaylistInfo info = ud->playlist_info.data.playlist;
 
-            GVariantBuilder builder;
-            g_variant_builder_init(&builder, G_VARIANT_TYPE("ao"));
-
             for(size_t i = 0; i < info.data.count; ++i){
                 GVariant* track = create_metadata_for_track(ud, ARRAY_AT(info.data, i), i);
 
-            g_variant_builder_add(&builder, "a{sv}", track);
+                g_variant_builder_add_value(&builder, track);
             }
             
         }else{
             GVariant* track = create_metadata_for_track(ud, ud->playlist_info.data.single, 0);
 
-            g_variant_builder_add(&builder, "a{sv}", track);
+            g_variant_builder_add_value(&builder, track);
         }
 
-        g_dbus_method_invocation_return_value(invocation, g_variant_new ("(aa{sv})", g_variant_builder_end(&builder)));
+        GVariant* return_tuple = g_variant_new("(@aa{sv})", g_variant_builder_end(&builder));
+
+        g_dbus_method_invocation_return_value(invocation, return_tuple);
     } else if (g_strcmp0(method_name, "AddTrack") == 0) {
         g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
                                               G_DBUS_ERROR_NOT_SUPPORTED,

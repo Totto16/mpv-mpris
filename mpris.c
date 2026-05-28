@@ -5,8 +5,6 @@
 #include <inttypes.h>
 #include <string.h>
 
-#include "./dbus/track-data.h"
-
 static const char *root_introspection_xml =
     "<node>\n"
     "  <interface name=\"org.mpris.MediaPlayer2\">\n"
@@ -102,10 +100,6 @@ static const char *root_introspection_xml =
     "  </interface>\n"
     "</node>\n";
 
-#include "dbus/track-data-introspection.h"
-
-static const char *tracker_data_introspection_xml = IO_MPV_MPRIS_TRACKDATA;
-
 typedef struct {
     const char* name;
     //
@@ -134,29 +128,6 @@ static void dynamic_art_handler_array_append_unchecked(DynamicArtHandlerArray* a
         array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW( array->capacity);
     
         array->items = g_realloc(array->items,sizeof(DynamicArtHandler) * array->capacity);
-    }
-
-    array->items[array->count] = item;
-    array->count++;
-}
-
-
-typedef struct {
-    char* interface_name;
-} TrackInterface;
-
-typedef struct {
-    TrackInterface* items;
-    size_t count;
-    size_t capacity;
-} TrackInterfaceArray;
-
-
-static void tracker_interface_array_append_unchecked(TrackInterfaceArray* array, TrackInterface item){
-    if(array->capacity <= array->count){
-        array->capacity = array->capacity == 0 ? START_ARRAY_CAP : ARRAY_CAP_GROW(array->capacity);
-    
-        array->items = g_realloc(array->items,sizeof(TrackInterface) * array->capacity);
     }
 
     array->items[array->count] = item;
@@ -204,10 +175,6 @@ typedef struct {
 
 typedef struct {
     guint interface_id;
-    guint no_track_id;
-    guint current_track_id;
-    TrackInterfaceArray track_interfaces;
-    GDBusObjectManagerServer* manager;
 } TrackList;
 
 typedef struct UserData
@@ -225,7 +192,6 @@ typedef struct UserData
     GDBusInterfaceInfo *root_interface_info;
     GDBusInterfaceInfo *player_interface_info;
     GDBusInterfaceInfo *track_list_interface_info;
-    GDBusInterfaceInfo *track_data_interface_info;
     guint root_interface_id;
     guint player_interface_id;
     TrackList track_list;
@@ -1360,140 +1326,6 @@ static GDBusInterfaceVTable vtable_track_list = {
     method_call_track_list, get_property_track_list, set_property_track_list, {0}
 };
 
-static void method_call_track_data(G_GNUC_UNUSED GDBusConnection *connection,
-                               G_GNUC_UNUSED const char *sender,
-                               G_GNUC_UNUSED const char *_object_path,
-                               G_GNUC_UNUSED const char *interface_name,
-                               G_GNUC_UNUSED const char *method_name,
-                               G_GNUC_UNUSED GVariant *parameters,
-                               GDBusMethodInvocation *invocation,
-                               G_GNUC_UNUSED gpointer user_data)
-{
-    fprintf(stderr,"method_call_track_data: %s %s %s\n", sender, _object_path, interface_name);
-
-    if (g_strcmp0(method_name, "Ping") == 0) {
-        g_dbus_method_invocation_return_value(invocation, NULL);
-    }else {
-        g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
-            G_DBUS_ERROR_UNKNOWN_METHOD,
-            "Unknown method");
-    }
-
-
-}
-
-static GVariant *get_property_track_data(G_GNUC_UNUSED GDBusConnection *connection,
-                                     G_GNUC_UNUSED const char *sender,
-                                    const char *object_path,
-                                     G_GNUC_UNUSED const char *interface_name,
-                                     const char *property_name,
-                                     GError **error,
-                                     gpointer user_data)
-{
-
-    fprintf(stderr,"get_property_track_data: %s %s %s %s\n", sender, object_path, interface_name, property_name);
-    UserData *ud = (UserData*)user_data;
-
-    PlaylistObjectPathInfo obj_info = get_playlist_object_path_info(object_path);
-    
-    TrackInterfaceProperties properties = {.filename = NULL, .title = NULL,.id = 0,.path = NULL};
-
-    switch (obj_info.type){
-        case PlaylistObjectPathInfoTypeError:{
-            g_set_error(error, G_DBUS_ERROR,
-                    G_DBUS_ERROR_UNKNOWN_OBJECT,
-                    "Invalid Object Path: %s", obj_info.data.error);
-            return NULL;
-        }
-        case PlaylistObjectPathInfoTypeNoTrack:{
-            properties = (TrackInterfaceProperties){.filename = NULL, .title = NULL,.id = 0,.path = NULL};
-            break;
-        }
-        case PlaylistObjectPathInfoTypeCurrentTrack:{
-            if(ud->playlist_info.is_in_playlist){
-                PlaylistInfo info = ud->playlist_info.data.playlist;
-                
-                properties = ARRAY_AT(info.data, info.current_pos);
-            }else{
-                properties = ud->playlist_info.data.single;
-            }
-            break;
-        }
-        case PlaylistObjectPathInfoTypeTrack:{
-            if(ud->playlist_info.is_in_playlist){
-                PlaylistInfo info = ud->playlist_info.data.playlist;
-                
-                properties = ARRAY_AT(info.data,obj_info.data.track_number);
-            }else{
-                g_set_error(error, G_DBUS_ERROR,
-                        G_DBUS_ERROR_UNKNOWN_OBJECT,
-                        "Invalid Object Path: Trying to use type track in without playlist");
-                return NULL;
-            }
-            break;
-        }
-        default:{
-            g_set_error(error, G_DBUS_ERROR,
-                    G_DBUS_ERROR_UNKNOWN_OBJECT,
-                    "Invalid Object Path: Only possible value is the trackid of the current track, error in object path parsing");
-            return NULL;
-        }
-    }
-
-    GVariant *ret;
-    if (g_strcmp0(property_name, "Filename") == 0) {
-        if(properties.filename == NULL){
-            ret = g_variant_new_string("");
-        }else{
-            ret = g_variant_new_string(properties.filename);
-        }
-    } else if (g_strcmp0(property_name, "Title") == 0) {
-        if(properties.title == NULL){
-            ret = g_variant_new_string("");
-        }else{
-            ret = g_variant_new_string(properties.title);
-        }
-    } else if (g_strcmp0(property_name, "Id") == 0) {
-        ret = g_variant_new_int64(properties.id);
-    } else if (g_strcmp0(property_name, "Path") == 0) {
-        if(properties.path == NULL){
-            ret = g_variant_new_string("");
-        }else{
-            ret = g_variant_new_string(properties.path);
-        }
-    } else if (g_strcmp0(property_name, "ObjectPath") == 0) {
-        ret = g_variant_new_object_path(object_path);
-    } else {
-        ret = NULL;
-        g_set_error(error, G_DBUS_ERROR,
-                    G_DBUS_ERROR_UNKNOWN_PROPERTY,
-                    "Unknown property %s", property_name);
-    }
-
-    return ret;
-}
-
-static gboolean set_property_track_data(G_GNUC_UNUSED GDBusConnection *connection,
-                                    G_GNUC_UNUSED const char *sender,
-                                    G_GNUC_UNUSED const char *object_path,
-                                    G_GNUC_UNUSED const char *interface_name,
-                                    const char *property_name,
-                                    G_GNUC_UNUSED GVariant *value,
-                                    G_GNUC_UNUSED GError **error,
-                                    G_GNUC_UNUSED gpointer user_data)
-{   
-    fprintf(stderr,"set_property_track_data: %s %s %s %s\n", sender, object_path, interface_name, property_name);
-    g_set_error(error, G_DBUS_ERROR,
-                G_DBUS_ERROR_UNKNOWN_PROPERTY,
-                "Cannot set property %s", property_name);
-    return FALSE;
-}
-
-static GDBusInterfaceVTable vtable_track_data = {
-    method_call_track_data, get_property_track_data, set_property_track_data, {0}
-};
-
-
 static gboolean emit_property_changes(gpointer data)
 {
     UserData *ud = (UserData*)data;
@@ -1623,107 +1455,6 @@ static void set_stopped_status(UserData *ud)
   emit_property_changes(ud);
 }
 
-static gboolean
-track_data_on_handle_ping(
-    DBUSIoMpvMprisTrackData *skeleton,
-    GDBusMethodInvocation *invocation,
-    G_GNUC_UNUSED gpointer user_data)
-{
-
-    fprintf(stderr, "PRINT track_data_on_handle_ping\n");
-    dbus_io_mpv_mpris_track_data_complete_ping(
-        skeleton,
-        invocation);
-    return TRUE;
-}
-
-static TrackInterface add_tracker_interface(GDBusObjectManagerServer* manager, gchar* name, TrackInterfaceProperties properties){
-    GDBusObjectSkeleton *object = g_dbus_object_skeleton_new(name);
-
-    DBUSIoMpvMprisTrackData *iface;
-    iface = dbus_io_mpv_mpris_track_data_skeleton_new();
-
-    dbus_io_mpv_mpris_track_data_set_filename(iface,properties.filename);
-    dbus_io_mpv_mpris_track_data_set_id(iface,properties.id);
-    dbus_io_mpv_mpris_track_data_set_object_path(iface,name);
-    dbus_io_mpv_mpris_track_data_set_path(iface,properties.path);
-    dbus_io_mpv_mpris_track_data_set_title(iface,properties.title);
-
-    g_signal_connect(
-        iface,
-        "handle-ping",
-        G_CALLBACK(track_data_on_handle_ping),
-        NULL);
-
-
-    g_dbus_object_skeleton_add_interface(
-        object,
-        G_DBUS_INTERFACE_SKELETON(iface));
-
-    g_dbus_object_manager_server_export(
-        manager,
-        object);
-
-    g_object_unref(iface);
-    g_object_unref(object);
-
-    return (TrackInterface){.interface_name = name};
-}
-
-static void setup_track_interface_ids(UserData *ud, TrackList* track_list){
-    GError *error = NULL;
-
-    if(track_list->no_track_id == 0){
-        guint no_track_id =
-                    g_dbus_connection_register_object(ud->connection, TRACK_ID_NO_TRACK_INTERFACE,
-                                                    ud->track_data_interface_info,
-                                                    &vtable_track_data,
-                                                    ud, NULL, &error);
-        if (error != NULL) {
-            g_printerr("Failed to register track data interface: %s\n", error->message);
-            g_clear_error(&error);
-        }
-        fprintf(stderr, "ref_count: %u\n",ud->track_data_interface_info->ref_count);
-
-        track_list->no_track_id =  no_track_id;
-    }
-
-    if(track_list->current_track_id == 0){
-        guint current_track_id =
-                g_dbus_connection_register_object(ud->connection, TRACK_ID_CURRENT_INTERFACE,
-                                                ud->track_data_interface_info,
-                                                &vtable_track_data,
-                                                ud, NULL, &error);
-        if (error != NULL) {
-            g_printerr("Failed to register track data interface: %s\n", error->message);
-            g_clear_error(&error);
-        }
-
-        track_list->current_track_id =  current_track_id;
-    }
-
-    if(track_list->track_interfaces.count == 0){
-        
-        if(ud->playlist_info.is_in_playlist){
-            if(track_list->manager == NULL){
-                g_printerr("track list manager is NULL\n");
-            }
-
-            PlaylistInfo info = ud->playlist_info.data.playlist;
-            
-            for(size_t i = 0; i < info.data.count; ++i){
-                gchar *interface_name = g_strdup_printf(TRACK_ID_INTERFACE_FMT, i);
-
-                TrackInterface interface = add_tracker_interface(track_list->manager, interface_name, info.data.items[i]);
-
-                tracker_interface_array_append_unchecked(&(track_list->track_interfaces), interface);
-
-
-            }
-        }
-    }
-}
-
 static void setup_track_list(UserData *ud, TrackList* track_list){
     GError *error = NULL;
 
@@ -1738,12 +1469,6 @@ static void setup_track_list(UserData *ud, TrackList* track_list){
             g_clear_error(&error);
         }
     }
-    
-    track_list->manager = g_dbus_object_manager_server_new(TRACK_ID_MANAGER);
-    g_dbus_object_manager_server_set_connection(track_list->manager , ud->connection);
-
-    setup_track_interface_ids(ud, track_list);
-
 }
 
 // Register D-Bus object and interfaces, then set up mpv event handlers
@@ -1871,26 +1596,12 @@ static void on_name_acquired(G_GNUC_UNUSED GDBusConnection *connection,
    //do nothing
 }
 
-static void free_track_interface_id_array(UserData *ud, TrackInterfaceArray* array);
-
-static void clear_track_list(UserData *ud, TrackList* track_list){
-    free_track_interface_id_array(ud, &(track_list->track_interfaces));
-
+static void clear_track_list(G_GNUC_UNUSED UserData *ud, TrackList* track_list){
     track_list->interface_id = 0;
-    track_list->no_track_id = 0;
-    track_list->current_track_id = 0;
-
-    track_list->manager = NULL;
 }
 
 static void free_track_list(UserData *ud, TrackList* track_list){
     g_dbus_connection_unregister_object(ud->connection, track_list->interface_id);
-    g_dbus_connection_unregister_object(ud->connection, track_list->no_track_id);
-    g_dbus_connection_unregister_object(ud->connection, track_list->current_track_id);
-
-    free_track_interface_id_array(ud, &(track_list->track_interfaces));
-
-    g_object_unref(track_list->manager);
 
     clear_track_list(ud, track_list);
 }
@@ -2174,7 +1885,6 @@ static void update_playlist_count(UserData *ud, int64_t count){
 }
 
 static void free_maybe_playlist_info(MaybePlaylistInfo* info);
-static void setup_track_interface_ids(UserData *ud, TrackList* track_list);
 
 static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     //TODO: emit signals
@@ -2198,10 +1908,6 @@ static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     
     PlaylistInfo playlist = playlist_info_get(ud->mpv, (size_t)pos,(size_t)count);
     ud->playlist_info = (MaybePlaylistInfo){.is_in_playlist = TRUE, .data = {.playlist = playlist } };
-    
-    free_track_interface_id_array(ud, &(ud->track_list.track_interfaces));
-    setup_track_interface_ids(ud, &(ud->track_list));
-
 }
 
 static void handle_property_change(const char *name, void *data, UserData *ud)
@@ -2564,35 +2270,9 @@ static void free_maybe_playlist_info(MaybePlaylistInfo* info){
     *info = (MaybePlaylistInfo){.is_in_playlist = FALSE , .data = {.single = {.filename = NULL, .title = NULL,.id = 0,.path = NULL}}};
 }
 
-static void free_track_interface_id(UserData *ud, TrackInterface* interface){
-    fprintf(stderr,"free interface id: %s\n", interface->interface_name);
-    gboolean res = g_dbus_object_manager_server_unexport(ud->track_list.manager, interface->interface_name);
-
-    fprintf(stderr, "g_dbus_connection_unregister_object: %d\n", res);
-
-    g_free(interface->interface_name);
-    interface->interface_name = NULL;
-}
-
-static void free_track_interface_id_array(UserData *ud, TrackInterfaceArray* array){
-    for(size_t i = 0; i < array->count;++i){
-        free_track_interface_id(ud, &(array->items[i]));
-    }
-
-    g_free(array->items);
-
-    array->items = NULL;
-    array->capacity = 0;
-    array->count = 0;
-}
-
 static TrackList track_list_empty(void){
     return (TrackList){
-        .current_track_id = 0,
-        .no_track_id = 0,
         .interface_id = 0,
-        .manager = NULL,
-        .track_interfaces = (TrackInterfaceArray){ .capacity = 0, .count = 0, .items = NULL }
     };
 }
 
@@ -2604,7 +2284,6 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
     UserData ud = {.wakeup_pipe = {-1, -1}};
     GError *error = NULL;
     GDBusNodeInfo *root_introspection_data = NULL;
-    GDBusNodeInfo *tracker_data_introspection_data = NULL;
 
     ctx = g_main_context_new();
     loop = g_main_loop_new(ctx, FALSE);
@@ -2615,15 +2294,6 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
         g_printerr("%s\n", error->message);
         g_clear_error(&error);
     }
-
-    tracker_data_introspection_data = g_dbus_node_info_new_for_xml(tracker_data_introspection_xml, &error);
-    if (error != NULL) {
-        g_printerr("%s\n", error->message);
-        g_clear_error(&error);
-    }
-
-    ud.track_data_interface_info =
-        g_dbus_node_info_lookup_interface(tracker_data_introspection_data, "io.mpv.mpris.TrackData");
 
     ud.root_interface_info =
         g_dbus_node_info_lookup_interface(root_introspection_data, "org.mpris.MediaPlayer2");
@@ -2738,7 +2408,7 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
     g_free(ud.cached_path);
     g_free(ud.cached_art_url);
     g_dbus_node_info_unref(root_introspection_data);
-    g_dbus_node_info_unref(tracker_data_introspection_data);
+    mpv_free(ud.client_name);
     free_art_handler_array(&(ud.dynamic_art_handlers));
     free_maybe_playlist_info(&(ud.playlist_info));
 

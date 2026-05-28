@@ -100,6 +100,8 @@ static const char *root_introspection_xml =
     "  </interface>\n"
     "</node>\n";
 
+#define PRINTERR(...) g_printerr("MPRIS C Plugin: " __VA_ARGS__)
+
 typedef struct {
     const char* name;
     //
@@ -118,7 +120,7 @@ typedef struct {
 #define START_ARRAY_CAP (8)
 #define ARRAY_CAP_GROW(cap) ((cap)*2)
 
-#define ARRAY_ASSERT_IDX_IN_BOUNDS(arr, idx) ((((arr).count) <= (idx)) ? g_printerr("Array access out of bounds: size is %zu, idx was %zu\n", (arr).count, idx) : (void)NULL)
+#define ARRAY_ASSERT_IDX_IN_BOUNDS(arr, idx) ((((arr).count) <= (idx)) ? PRINTERR("Array access out of bounds: size is %zu, idx was %zu\n", (arr).count, idx) : (void)NULL)
 
 #define ARRAY_AT(arr, idx) (arr).items[ARRAY_ASSERT_IDX_IN_BOUNDS((arr), (idx)), idx]
 #define ARRAY_MUT_AT(arr, idx) &((arr)->items[ARRAY_ASSERT_IDX_IN_BOUNDS((*(arr)), (idx)), idx])
@@ -1356,7 +1358,7 @@ static gboolean emit_property_changes(gpointer data)
                                       "PropertiesChanged",
                                       params, &error);
         if (error != NULL) {
-            g_printerr("%s\n", error->message);
+            PRINTERR("%s\n", error->message);
             g_clear_error(&error);
         }
 
@@ -1382,7 +1384,7 @@ static void emit_seeked_signal(UserData *ud)
                                   params, &error);
 
     if (error != NULL) {
-        g_printerr("%s\n", error->message);
+        PRINTERR("%s\n", error->message);
         g_clear_error(&error);
     }
 }
@@ -1465,7 +1467,7 @@ static void setup_track_list(UserData *ud, TrackList* track_list){
                                               &vtable_track_list,
                                               ud, NULL, &error);
         if (error != NULL) {
-            g_printerr("Failed to register track list interface: %s\n", error->message);
+            PRINTERR("Failed to register track list interface: %s\n", error->message);
             g_clear_error(&error);
         }
     }
@@ -1487,7 +1489,7 @@ static void on_bus_acquired(GDBusConnection *connection,
                                               &vtable_root,
                                               user_data, NULL, &error);
         if (error != NULL) {
-            g_printerr("Failed to register root interface: %s\n", error->message);
+            PRINTERR("Failed to register root interface: %s\n", error->message);
             g_clear_error(&error);
         }
     }
@@ -1499,7 +1501,7 @@ static void on_bus_acquired(GDBusConnection *connection,
                                               &vtable_player,
                                               user_data, NULL, &error);
         if (error != NULL) {
-            g_printerr("Failed to register player interface: %s\n", error->message);
+            PRINTERR("Failed to register player interface: %s\n", error->message);
             g_clear_error(&error);
         }
     }
@@ -1650,7 +1652,7 @@ static void update_playlist_pos(UserData *ud, int64_t pos){
         mpv_get_property(ud->mpv, "playlist-count", MPV_FORMAT_INT64, &count);
 
         if(count < 0){
-            g_printerr("Invalid playlist count: %ld, in updating pos\n", count);
+            PRINTERR("Invalid playlist count: %ld, in updating pos\n", count);
             return;
         }
 
@@ -1660,7 +1662,7 @@ static void update_playlist_pos(UserData *ud, int64_t pos){
     }
 
     if(pos < 0){
-        g_printerr("playlist pos is negative (%ld), but should be 0 >=\n", pos);
+        PRINTERR("playlist pos is negative (%ld), but should be 0 >=\n", pos);
         return;
     }
 
@@ -1691,7 +1693,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
     int result = mpv_get_property(mpv, "playlist", MPV_FORMAT_NODE, &node);
 
     if(result < 0){
-        g_printerr("ERROR: getting property playlist failed: %d\n", result);
+        PRINTERR("ERROR: getting property playlist failed: %d\n", result);
         return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
     }
 
@@ -1709,7 +1711,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
 
 
     if(node.format != MPV_FORMAT_NODE_ARRAY){
-        g_printerr("ERROR: invalid format for root node of 'playlist': %d\n", node.format);
+        PRINTERR("ERROR: invalid format for root node of 'playlist': %d\n", node.format);
 
         mpv_free_node_contents(&node);
         return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
@@ -1719,7 +1721,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
 
     // why chose an int, if the docs also say, can't be negative, i love the usages of ints, just use int32_t if you REALLY need that data range
     if(node_array->num < 0){
-        g_printerr("ERROR: invalid length of array in 'playlist': %d\n", node_array->num);
+        PRINTERR("ERROR: invalid length of array in 'playlist': %d\n", node_array->num);
 
         mpv_free_node_contents(&node);
         return (PlaylistInfo){.current_pos = 0,.data = (TrackInterfacePropertiesArray){.count = 0,.capacity = 0,.items = NULL}};
@@ -1733,7 +1735,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
         mpv_node current_node = node_array->values[i];
 
         if(current_node.format != MPV_FORMAT_NODE_MAP){
-            g_printerr("ERROR: invalid format for array[%zu] node of 'playlist': %d\n", i, current_node.format);
+            PRINTERR("ERROR: invalid format for array[%zu] node of 'playlist': %d\n", i, current_node.format);
 
             mpv_free_node_contents(&node);
             free_tracker_interface_properties_array(&array);
@@ -1743,7 +1745,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
         struct mpv_node_list * node_map = current_node.u.list;
 
         if(node_map->num < 0){
-            g_printerr("ERROR: invalid length of map in 'playlist': %d\n", node_map->num);
+            PRINTERR("ERROR: invalid length of map in 'playlist': %d\n", node_map->num);
 
             mpv_free_node_contents(&node);
             free_tracker_interface_properties_array(&array);
@@ -1759,7 +1761,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
 
                 if(g_strcmp0(current_map_key, "filename") == 0){
                     if(current_map_node.format != MPV_FORMAT_STRING) {
-                        g_printerr("ERROR: invalid format for array[%zu].filename node of 'playlist': %d\n", i, current_map_node.format);
+                        PRINTERR("ERROR: invalid format for array[%zu].filename node of 'playlist': %d\n", i, current_map_node.format);
 
                         mpv_free_node_contents(&node);
                         free_tracker_interface_properties_array(&array);
@@ -1775,7 +1777,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
                     continue;
                 }else if(g_strcmp0(current_map_key, "title") == 0){
                     if(current_map_node.format != MPV_FORMAT_STRING) {
-                        g_printerr("ERROR: invalid format for array[%zu].title node of 'playlist': %d\n", i, current_map_node.format);
+                        PRINTERR("ERROR: invalid format for array[%zu].title node of 'playlist': %d\n", i, current_map_node.format);
 
                         mpv_free_node_contents(&node);
                         free_tracker_interface_properties_array(&array);
@@ -1785,7 +1787,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
                     properties.title = g_strdup(current_map_node.u.string);
                 }else if(g_strcmp0(current_map_key, "id") == 0){
                     if(current_map_node.format != MPV_FORMAT_INT64) {
-                        g_printerr("ERROR: invalid format for array[%zu].id node of 'playlist': %d\n", i, current_map_node.format);
+                        PRINTERR("ERROR: invalid format for array[%zu].id node of 'playlist': %d\n", i, current_map_node.format);
 
                         mpv_free_node_contents(&node);
                         free_tracker_interface_properties_array(&array);
@@ -1795,7 +1797,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
                     properties.id = current_map_node.u.int64;
                 }else if(g_strcmp0(current_map_key, "playlist-path") == 0){
                     if(current_map_node.format != MPV_FORMAT_STRING) {
-                        g_printerr("ERROR: invalid format for array[%zu].playlist-path node of 'playlist': %d\n", i, current_map_node.format);
+                        PRINTERR("ERROR: invalid format for array[%zu].playlist-path node of 'playlist': %d\n", i, current_map_node.format);
 
                         mpv_free_node_contents(&node);
                         free_tracker_interface_properties_array(&array);
@@ -1804,7 +1806,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
 
                     properties.path = g_strdup(current_map_node.u.string);
                 }else{
-                    g_printerr("ERROR: invalid key '%s' in map in 'playlist'\n", current_map_key);
+                    PRINTERR("ERROR: invalid key '%s' in map in 'playlist'\n", current_map_key);
 
                     mpv_free_node_contents(&node);
                     free_tracker_interface_properties_array(&array);
@@ -1818,7 +1820,7 @@ static PlaylistInfo playlist_info_get(mpv_handle *mpv, size_t pos, size_t count)
     }
 
     if(array.count != count){
-        g_printerr("ERROR: count doesn't match node count in 'playlist': %zu != %zu\n", array.count, count);
+        PRINTERR("ERROR: count doesn't match node count in 'playlist': %zu != %zu\n", array.count, count);
 
         mpv_free_node_contents(&node);
         free_tracker_interface_properties_array(&array);
@@ -1863,7 +1865,7 @@ static MaybePlaylistInfo maybe_playlist_info_init(mpv_handle *mpv){
     }
 
     if(count < 0){
-        g_printerr("Invalid playlist count: %ld\n", count);
+        PRINTERR("Invalid playlist count: %ld\n", count);
         return (MaybePlaylistInfo){.is_in_playlist = FALSE, .data = {.single = get_current_track_properties(mpv) }};
     }
 
@@ -1876,7 +1878,7 @@ static MaybePlaylistInfo maybe_playlist_info_init(mpv_handle *mpv){
 static void update_playlist_count(UserData *ud, int64_t count){
 
     if(!ud->playlist_info.is_in_playlist){
-        g_printerr("Update of count not allowed in case of a missing playlist\n");
+        PRINTERR("Update of count not allowed in case of a missing playlist\n");
         return;
     }
 
@@ -1894,12 +1896,12 @@ static void update_playlist_data_by_new_count_impl(UserData *ud, int64_t count){
     mpv_get_property(ud->mpv, "playlist-pos", MPV_FORMAT_INT64, &pos);
 
     if(pos < 0){
-        g_printerr("Invalid playlist pos: %ld, not allowed in case of a playlist\n", pos);
+        PRINTERR("Invalid playlist pos: %ld, not allowed in case of a playlist\n", pos);
         return;
     }
 
     if(count < 0){
-        g_printerr("Invalid playlist count: %ld\n", count);
+        PRINTERR("Invalid playlist count: %ld\n", count);
         return;
     }
 
@@ -2291,7 +2293,7 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
     // Load introspection data and split into separate interfaces
     root_introspection_data = g_dbus_node_info_new_for_xml(root_introspection_xml, &error);
     if (error != NULL) {
-        g_printerr("%s\n", error->message);
+        PRINTERR("%s\n", error->message);
         g_clear_error(&error);
     }
 

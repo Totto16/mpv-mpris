@@ -304,7 +304,7 @@ static gchar *path_to_uri(mpv_handle *mpv, char *path)
     return uri;
 }
 
-static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, char *path)
+static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, gchar *path)
 {
     char *uri;
     uri = g_uri_parse_scheme(path);
@@ -317,7 +317,7 @@ static void add_metadata_uri_by_path(mpv_handle *mpv, GVariantDict *dict, char *
         g_free(converted);
     }
 
-    mpv_free(path);
+    g_free(path);
 }
 
 static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
@@ -327,7 +327,8 @@ static void add_metadata_uri(mpv_handle *mpv, GVariantDict *dict)
         return;
     }
 
-    add_metadata_uri_by_path(mpv, dict, path);
+    add_metadata_uri_by_path(mpv, dict, g_strdup(path));
+    mpv_free(path);
 }
 
 static gchar* try_get_cover_art_file(mpv_handle *mpv)
@@ -760,12 +761,8 @@ static GVariant *create_metadata_for_track(UserData *ud, TrackInterfacePropertie
     //TODO: if possible, how to unify "create_metadata" and "create_metadata_for_track"
 
     GVariantDict dict;
-    gchar *temp_str;
 
     g_variant_dict_init(&dict, NULL);
-
-    temp_str = g_strdup_printf(TRACK_ID_INTERFACE_FMT, track_idx);
-    g_free(temp_str);
 
     { // set album, if none is set
 
@@ -1228,22 +1225,21 @@ static void method_call_track_list(G_GNUC_UNUSED GDBusConnection *connection,
 
             PlaylistInfo info = ud->playlist_info.data.playlist;
 
-            GVariantBuilder builder;
-            g_variant_builder_init(&builder, G_VARIANT_TYPE("ao"));
-
             for(size_t i = 0; i < info.data.count; ++i){
                 GVariant* track = create_metadata_for_track(ud, ARRAY_AT(info.data, i), i);
 
-            g_variant_builder_add(&builder, "a{sv}", track);
+                g_variant_builder_add_value(&builder, track);
             }
             
         }else{
             GVariant* track = create_metadata_for_track(ud, ud->playlist_info.data.single, 0);
 
-            g_variant_builder_add(&builder, "a{sv}", track);
+            g_variant_builder_add_value(&builder, track);
         }
 
-        g_dbus_method_invocation_return_value(invocation, g_variant_new ("(aa{sv})", g_variant_builder_end(&builder)));
+        GVariant* return_tuple = g_variant_new("(@aa{sv})", g_variant_builder_end(&builder));
+
+        g_dbus_method_invocation_return_value(invocation, return_tuple);
     } else if (g_strcmp0(method_name, "AddTrack") == 0) {
         g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR,
                                               G_DBUS_ERROR_NOT_SUPPORTED,

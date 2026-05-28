@@ -24,7 +24,7 @@ UID ?= $(shell id -u)
   test \
   clean
 
-mpris.so: mpris.c dbus/track-data.c
+mpris.so: mpris.c
 	$(CC) mpris.c dbus/track-data.c -o mpris.so $(BASE_CFLAGS) $(CFLAGS) $(CPPFLAGS) $(BASE_LDFLAGS) $(LDFLAGS) -shared -fPIC
 
 dbus/track-data.c: dbus/io.mpv.mpris.TrackData.xml dbus/track-data-introspection.h

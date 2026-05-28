@@ -1583,8 +1583,7 @@ static void set_stopped_status(UserData *ud)
 static gboolean
 track_data_on_handle_ping(
     DBUSIoMpvMprisTrackData *skeleton,
-    GDBusMethodInvocation *invocation,
-    G_GNUC_UNUSED gpointer user_data)
+    GDBusMethodInvocation *invocation)
 {
 
     fprintf(stderr, "PRINT track_data_on_handle_ping\n");

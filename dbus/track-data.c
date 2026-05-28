@@ -402,6 +402,7 @@ dbus_io_mpv_mpris_track_data_override_properties (GObjectClass *klass, guint pro
   return property_id_begin - 1;
 }
 
+#include <stdio.h>
 
 inline static void
 dbus_io_mpv_mpris_track_data_method_marshal_ping (
@@ -411,7 +412,8 @@ dbus_io_mpv_mpris_track_data_method_marshal_ping (
     const GValue *param_values,
     void         *invocation_hint,
     void         *marshal_data)
-{
+{ 
+  fprintf(stderr, "IN MARSHALLL\n");
   _g_dbus_codegen_marshal_BOOLEAN__OBJECT (closure,
     return_value, n_param_values, param_values, invocation_hint, marshal_data);
 }

@@ -2207,6 +2207,9 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
     ud.track_list = track_list_empty();
     ud.client_name = mpv_get_property_string(mpv, "audio-client-name");
     ud.playlist_info = maybe_playlist_info_init(mpv);
+    char *client_name = mpv_get_property_string(mpv, "audio-client-name");
+    ud.client_name = g_strdup(client_name);
+    mpv_free(client_name);
 
     char *bus_name = build_bus_name(ud.client_name, FALSE);
     g_main_context_push_thread_default(ctx);
@@ -2248,6 +2251,7 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
     mpv_free(ud.client_name);
     free_art_handler_array(&(ud.dynamic_art_handlers));
     free_maybe_playlist_info(&(ud.playlist_info));
+    g_free(ud.client_name);
     g_free(ud.cached_path);
     g_free(ud.cached_art_url);
 

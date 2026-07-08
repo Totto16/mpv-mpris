@@ -204,6 +204,8 @@ typedef struct UserData
     gboolean paused;
     gboolean events_setup;
     MaybePlaylistInfo playlist_info;
+    gchar *cached_path;
+    gchar *cached_art_url;
     //
     DynamicArtHandlerArray dynamic_art_handlers;
 } UserData;
@@ -476,37 +478,38 @@ static gchar* get_art_url(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_ha
     return NULL;
 }
 
-// cached last file path, owned by mpv
-static char *cached_path = NULL;
 
-// cached last artwork url, owned by glib
-static gchar *cached_art_url = NULL;
-
-static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict, gchar* path)
+static void add_metadata_art_by_path(UserData *ud, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict, gchar* path)
 {
+
+    mpv_handle *mpv = ud->mpv;
+
     // mpv may call create_metadata multiple times, so cache to save CPU
-    if (!cached_path || strcmp(path, cached_path)) {
-        g_free(cached_path);
-        g_free(cached_art_url);
-        cached_path = path;
-        cached_art_url = get_art_url(mpv, dynamic_art_handlers, path);
-    } else {
-        g_free(path);
+    if (!ud->cached_path || strcmp(path, ud->cached_path)) {
+        g_free(ud->cached_path);
+        g_free(ud->cached_art_url);
+        ud->cached_path = g_strdup(path);
+        ud->cached_art_url = get_art_url(mpv, dynamic_art_handlers, path);
     }
 
-    if (cached_art_url) {
-        g_variant_dict_insert(dict, "mpris:artUrl", "s", cached_art_url);
+    g_free(path);
+
+    if (ud->cached_art_url) {
+        g_variant_dict_insert(dict, "mpris:artUrl", "s", ud->cached_art_url);
     }
 }
 
-static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict)
+static void add_metadata_art(UserData *ud, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict)
 {
+
+    mpv_handle *mpv = ud->mpv;
+
     char *path = mpv_get_property_string(mpv, "path");
     if (!path) {
         return;
     }
 
-    add_metadata_art_by_path(mpv, dynamic_art_handlers, dict, g_strdup(path));
+    add_metadata_art_by_path(ud, dynamic_art_handlers, dict, g_strdup(path));
     mpv_free(path);
 }
 
@@ -714,7 +717,7 @@ static GVariant *create_metadata(UserData *ud)
     }
 
     add_metadata_uri(ud->mpv, &dict);
-    add_metadata_art(ud->mpv, ud->dynamic_art_handlers,&dict);
+    add_metadata_art(ud, ud->dynamic_art_handlers,&dict);
     add_metadata_content_created(ud->mpv, &dict);
 
     return g_variant_dict_end(&dict);
@@ -738,7 +741,7 @@ static GVariant *create_metadata_for_track(UserData *ud, TrackInterfacePropertie
             g_free(dirname);
 
             add_metadata_uri_by_path(ud->mpv, &dict, g_strdup(properties.path));
-            add_metadata_art_by_path(ud->mpv, ud->dynamic_art_handlers,&dict, g_strdup(properties.path));
+            add_metadata_art_by_path(ud, ud->dynamic_art_handlers,&dict, g_strdup(properties.path));
         }
     }
 
@@ -2245,6 +2248,8 @@ __attribute__ ((visibility ("default"))) int mpv_open_cplugin(mpv_handle *mpv)
     mpv_free(ud.client_name);
     free_art_handler_array(&(ud.dynamic_art_handlers));
     free_maybe_playlist_info(&(ud.playlist_info));
+    g_free(ud.cached_path);
+    g_free(ud.cached_art_url);
 
     return 0;
 }

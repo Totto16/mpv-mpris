@@ -981,7 +981,7 @@ static void method_call_player(G_GNUC_UNUSED GDBusConnection *connection,
         int64_t new_position_us;
 
         g_variant_get(parameters, "(&ox)", &object_path, &new_position_us);
-        new_position_s = ((float)new_position_us) / 1000000.0; // us -> s
+        new_position_s = ((double)new_position_us) / 1000000.0; // us -> s
         
         PlaylistObjectPathInfo info = get_playlist_object_path_info(object_path);
 

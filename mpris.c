@@ -107,7 +107,7 @@ typedef struct {
     //
     void* state;
     //
-    gchar*(*try_get_art)(mpv_handle *mpv, char *path, void* state);
+    gchar*(*try_get_art)(mpv_handle *mpv, const char *path, void* state);
     void(*free_state)(void* state);
 } DynamicArtHandler;
 
@@ -279,7 +279,7 @@ static void add_metadata_item_string_list(mpv_handle *mpv, GVariantDict *dict,
     }
 }
 
-static gchar *path_to_uri(mpv_handle *mpv, char *path)
+static gchar *path_to_uri(mpv_handle *mpv, const char *path)
 {
     char* working_dir;
     gchar* canonical;
@@ -343,7 +343,7 @@ static gchar* try_get_cover_art_file(mpv_handle *mpv)
     return out;
 }
 
-static gchar* try_get_folder_art(mpv_handle *mpv, char *path)
+static gchar* try_get_folder_art(mpv_handle *mpv, const char *path)
 {
     gchar *out = NULL;
     gchar *dirname = g_path_get_dirname(path);
@@ -382,7 +382,7 @@ done:
     return out;
 }
 
-static gchar* try_get_dynamic_art(mpv_handle *mpv, DynamicArtHandlerArray handlers,char *path){
+static gchar* try_get_dynamic_art(mpv_handle *mpv, DynamicArtHandlerArray handlers, const char *path){
 
     for(size_t i = 0; i < handlers.count;++i){
         const DynamicArtHandler handler = handlers.items[i];
@@ -400,7 +400,7 @@ static const char *youtube_url_pattern =
 
 static GRegex *youtube_url_regex;
 
-static gchar* try_get_youtube_thumbnail(char *path)
+static gchar* try_get_youtube_thumbnail(const char *path)
 {
     gchar *out = NULL;
     if (!youtube_url_regex) {
@@ -445,7 +445,7 @@ static gchar* extract_embedded_art(AVFormatContext *context) {
     return img;
 }
 
-static gchar* try_get_embedded_art(char *path)
+static gchar* try_get_embedded_art(const char *path)
 {
     gchar *out = NULL;
     AVFormatContext *context = NULL;
@@ -457,7 +457,7 @@ static gchar* try_get_embedded_art(char *path)
     return out;
 }
 
-static gchar* get_art_url(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, char *path)
+static gchar* get_art_url(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, const char *path)
 {
     gchar *url;
     gboolean is_remote = g_str_has_prefix(path, "http");
@@ -482,7 +482,7 @@ static char *cached_path = NULL;
 // cached last artwork url, owned by glib
 static gchar *cached_art_url = NULL;
 
-static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict, gchar* path)
+static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict, gchar* path)
 {
     // mpv may call create_metadata multiple times, so cache to save CPU
     if (!cached_path || strcmp(path, cached_path)) {
@@ -499,7 +499,7 @@ static void add_metadata_art_by_path(mpv_handle *mpv, DynamicArtHandlerArray dyn
     }
 }
 
-static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers,GVariantDict *dict)
+static void add_metadata_art(mpv_handle *mpv, DynamicArtHandlerArray dynamic_art_handlers, GVariantDict *dict)
 {
     char *path = mpv_get_property_string(mpv, "path");
     if (!path) {
@@ -2021,7 +2021,7 @@ static gchar* format_format_filename_tiny_media_manager(TinyMediaManagerNameForm
     return g_strdup_printf(format.fmt, dirname);
 }
 
-static gchar* get_basename_without_ext(char* path){
+static gchar* get_basename_without_ext(const char* path){
     gchar *basename = g_path_get_basename(path);;
     if(basename == NULL){
         return NULL;
@@ -2036,7 +2036,7 @@ static gchar* get_basename_without_ext(char* path){
     return basename;
 }
 
-static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, char *path, G_GNUC_UNUSED TinyMediaManagerState* state){
+static gchar* try_get_art_tiny_media_manager(mpv_handle *mpv, const char *path, G_GNUC_UNUSED TinyMediaManagerState* state){
     gchar *out = NULL;
     gchar *dirname = g_path_get_dirname(path);
     gchar *basename = get_basename_without_ext(path);
@@ -2117,7 +2117,7 @@ static DynamicArtHandlerArray get_dynamic_art_handlers(void){
         DynamicArtHandler tiny_media_info_thumb_handler = {
             .name ="TinyMediaInfo",
             .state = state,
-            .try_get_art = (gchar*(*)(mpv_handle *mpv, char *path, void* state))try_get_art_tiny_media_manager,
+            .try_get_art = (gchar*(*)(mpv_handle *mpv, const char *path, void* state))try_get_art_tiny_media_manager,
             .free_state = (void(*)(void* state))free_state_tiny_media_manager,
         };
 

@@ -1874,10 +1874,11 @@ static MaybePlaylistInfo maybe_playlist_info_init(mpv_handle *mpv){
 
 static void update_playlist_count(UserData *ud, int64_t count){
 
-    if(!ud->playlist_info.is_in_playlist){
-        PRINTERR("Update of count not allowed in case of a missing playlist\n");
+    if(!ud->playlist_info.is_in_playlist)
+
+        PRINTERR("Update of count not allowed in case of a missing playlist: %ld\n", count);
         return;
-    }
+    
 
     update_playlist_data_by_new_count_impl(ud, count);
 
